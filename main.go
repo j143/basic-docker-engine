@@ -79,3 +79,33 @@ func must(err error) {
 		os.Exit(1)
 	}
 }
+
+// read code: https://github.com/containerd/cgroups
+func setupCgroups(containerID string, memoryLimit int) error {
+	// Create cgroup
+	cgroupPath := fmt.Sprintf("/sys/fs/cgroup/memory/lean-docker/%s", containerID)
+	if err := os.MkdirAll(cgroupPath, 0755); err != nil {
+		return fmt.Errorf("failed to create cgroup: %w", err)
+	}
+	
+	// Set memory limit
+	if err := os.WriteFile(
+		fmt.Sprintf("%s/memory.limit_in_bytes", cgroupPath), 
+		[]byte(fmt.Sprintf("%d", memoryLimit)), 
+		0644,
+	); err != nil {
+		return fmt.Errorf("failed to set memory limit: %w", err)
+	}
+	
+	// Add current process to cgroup
+	pid := os.Getpid()
+	if err := os.WriteFile(
+		fmt.Sprintf("%s/cgroup.procs", cgroupPath), 
+		[]byte(fmt.Sprintf("%d", pid)), 
+		0644,
+	); err != nil {
+		return fmt.Errorf("failed to add process to cgroup: %w", err)
+	}
+	
+	return nil
+}
