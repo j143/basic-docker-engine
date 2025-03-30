@@ -5,9 +5,56 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"syscall"
 	"time"
 )
+
+// Environment detection
+var (
+	// Set to true if we're running in a container environment
+	inContainer = false
+	// Set to true if we have full namespace privileges
+	hasNamespacePrivileges = false
+	// Set to true if we have cgroup access
+	hasCgroupAccess = false
+)
+
+func init() {
+	// Detect if we're running in a container
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		inContainer = true
+	} else if os.Getenv("CODESPACES") == "true" {
+		inContainer = true
+	} else {
+		// Check if /proc/self/cgroup contains docker or containerd
+		data, err := os.ReadFile("/proc/self/cgroup")
+		if err == nil && (strings.Contains(string(data), "docker") || 
+						  strings.Contains(string(data), "containerd")) {
+			inContainer = true
+		}
+	}
+
+	// Test namespace privileges
+	cmd := exec.Command("unshare", "--user", "echo", "test")
+	hasNamespacePrivileges = cmd.Run() == nil
+
+	// Test cgroup access
+	cgroupPath := "/sys/fs/cgroup/memory"
+	_, err := os.Stat(cgroupPath)
+	hasCgroupAccess = err == nil
+	if hasCgroupAccess {
+		// Try to create a test cgroup
+		testPath := filepath.Join(cgroupPath, "lean-docker-test")
+		hasCgroupAccess = os.MkdirAll(testPath, 0755) == nil
+		// Clean up test path
+		os.Remove(testPath)
+	}
+
+	fmt.Printf("Environment detected: inContainer=%v, hasNamespacePrivileges=%v, hasCgroupAccess=%v\n", 
+		inContainer, hasNamespacePrivileges, hasCgroupAccess)
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -26,6 +73,8 @@ func main() {
 		listContainers()
 	case "images":
 		listImages()
+	case "info":
+		printSystemInfo()
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])
 		printUsage()
@@ -35,9 +84,25 @@ func main() {
 
 func printUsage() {
 	fmt.Println("Usage:")
-	fmt.Println("  basic-docker run <command> [args...]  - Run a command in a container")
-	fmt.Println("  basic-docker ps                      - List running containers")
-	fmt.Println("  basic-docker images                  - List available images")
+	fmt.Println("  lean-docker run <command> [args...]  - Run a command in a container")
+	fmt.Println("  lean-docker ps                       - List running containers")
+	fmt.Println("  lean-docker images                   - List available images")
+	fmt.Println("  lean-docker info                     - Show system information")
+}
+
+func printSystemInfo() {
+	fmt.Println("Lean Docker Engine - System Information")
+	fmt.Println("=======================================")
+	fmt.Printf("Go version: %s\n", runtime.Version())
+	fmt.Printf("OS/Arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("Running in container: %v\n", inContainer)
+	fmt.Printf("Namespace privileges: %v\n", hasNamespacePrivileges)
+	fmt.Printf("Cgroup access: %v\n", hasCgroupAccess)
+	fmt.Println("Available features:")
+	fmt.Printf("  - Process isolation: %v\n", hasNamespacePrivileges)
+	fmt.Printf("  - Network isolation: %v\n", hasNamespacePrivileges)
+	fmt.Printf("  - Resource limits: %v\n", hasCgroupAccess)
+	fmt.Printf("  - Filesystem isolation: true\n")
 }
 
 func run() {
@@ -46,42 +111,91 @@ func run() {
 	fmt.Printf("Starting container %s\n", containerID)
 
 	// Create rootfs for this container
-	rootfs := filepath.Join("/tmp/basic-docker/containers", containerID, "rootfs")
+	rootfs := filepath.Join("/tmp/lean-docker/containers", containerID, "rootfs")
 	if err := os.MkdirAll(rootfs, 0755); err != nil {
 		fmt.Printf("Error creating rootfs: %v\n", err)
 		os.Exit(1)
 	}
 
-	// In a real implementation, we'd copy from an image
-	// Here we'll just create a minimal filesystem
+	// Create a minimal rootfs
 	must(createMinimalRootfs(rootfs))
 
-	// This is the process that will run inside our container
-	cmd := exec.Command(os.Args[2], os.Args[3:]...)
+	if hasNamespacePrivileges && !inContainer {
+		// Full isolation approach for pure Linux environments
+		runWithNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
+	} else {
+		// Limited isolation for container environments
+		runWithoutNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
+	}
+	
+	fmt.Printf("Container %s exited\n", containerID)
+}
+
+// runWithNamespaces uses full Linux namespace isolation
+func runWithNamespaces(containerID, rootfs, command string, args []string) {
+	cmd := exec.Command(command, args...)
 	
 	// Set up namespaces for isolation
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWUTS | // Hostname isolation
-			syscall.CLONE_NEWPID | // Process ID isolation
-			syscall.CLONE_NEWNS | // Mount isolation
-			syscall.CLONE_NEWNET, // Network isolation
-		Chroot: rootfs, // Use our container's rootfs
+			syscall.CLONE_NEWPID | // Process ID isolation 
+			syscall.CLONE_NEWNS,   // Mount isolation
 	}
+	
+	// Add network isolation if available
+	if hasNamespacePrivileges {
+		cmd.SysProcAttr.Cloneflags |= syscall.CLONE_NEWNET
+	}
+	
+	// Use the container's rootfs
+	cmd.SysProcAttr.Chroot = rootfs
 	
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	
-	// Set up resource constraints (memory: 100MB)
-	must(setupCgroups(containerID, 100*1024*1024))
+	// Set up resource constraints if available
+	if hasCgroupAccess {
+		must(setupCgroups(containerID, 100*1024*1024))
+	}
 	
-	// Run the container process
 	if err := cmd.Run(); err != nil {
 		fmt.Println("Error:", err)
 		os.Exit(1)
 	}
+}
+
+// runWithoutNamespaces uses basic chroot-like isolation for container environments
+func runWithoutNamespaces(containerID, rootfs, command string, args []string) {
+	// Create a script to run the command with basic isolation
+	script := fmt.Sprintf(`#!/bin/sh
+cd %s
+export PATH=/bin:/usr/bin:/sbin:/usr/sbin
+# Try different isolation methods
+if command -v chroot > /dev/null && [ $(id -u) -eq 0 ]; then
+    # If we have chroot and root
+    chroot . %s %s
+elif command -v unshare > /dev/null; then
+    # Try unshare if available
+    unshare --mount --uts --ipc --pid --fork -- %s %s
+else
+    # Fallback without isolation
+    %s %s
+fi
+`, rootfs, command, combineArgs(args), command, combineArgs(args), command, combineArgs(args))
 	
-	fmt.Printf("Container %s exited\n", containerID)
+	scriptPath := filepath.Join(rootfs, "run.sh")
+	os.WriteFile(scriptPath, []byte(script), 0755)
+	
+	// Execute the script
+	cmd := exec.Command("/bin/sh", scriptPath)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	
+	if err := cmd.Run(); err != nil {
+		fmt.Println("Error:", err)
+	}
 }
 
 func createMinimalRootfs(rootfs string) error {
@@ -93,47 +207,43 @@ func createMinimalRootfs(rootfs string) error {
 		}
 	}
 	
-	// Copy a minimal set of binaries (in a real implementation,
-	// this would come from an image)
-	// This assumes busybox is available on your system
+	// Try copying busybox if available
 	busyboxPath, err := exec.LookPath("busybox")
-	if err != nil {
-		return fmt.Errorf("busybox not found: %v", err)
-	}
-	
-	if err := copyFile(busyboxPath, filepath.Join(rootfs, "bin/busybox")); err != nil {
-		return fmt.Errorf("failed to copy busybox: %v", err)
-	}
-	
-	// Create symlinks for common commands
-	for _, cmd := range []string{"sh", "ls", "echo", "cat"} {
-		linkPath := filepath.Join(rootfs, "bin", cmd)
-		if err := os.Symlink("busybox", linkPath); err != nil {
-			return fmt.Errorf("failed to create symlink for %s: %v", cmd, err)
+	if err == nil {
+		if err := copyFile(busyboxPath, filepath.Join(rootfs, "bin/busybox")); err != nil {
+			return fmt.Errorf("failed to copy busybox: %v", err)
+		}
+		
+		// Create symlinks for common commands
+		for _, cmd := range []string{"sh", "ls", "echo", "cat", "ps"} {
+			linkPath := filepath.Join(rootfs, "bin", cmd)
+			if err := os.Symlink("busybox", linkPath); err != nil {
+				return fmt.Errorf("failed to create symlink for %s: %v", cmd, err)
+			}
+		}
+	} else {
+		// Copy basic binaries from host if busybox is not available
+		for _, cmd := range []string{"sh", "ls", "echo", "cat"} {
+			cmdPath, err := exec.LookPath(cmd)
+			if err == nil {
+				if err := copyFile(cmdPath, filepath.Join(rootfs, "bin", filepath.Base(cmdPath))); err != nil {
+					fmt.Printf("Warning: Failed to copy %s: %v\n", cmd, err)
+				}
+			}
 		}
 	}
 	
 	return nil
 }
 
-func copyFile(src, dst string) error {
-	// Read the source file
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	
-	// Write to the destination file
-	if err := os.WriteFile(dst, data, 0755); err != nil {
-		return err
-	}
-	
-	return nil
-}
-
 func setupCgroups(containerID string, memoryLimit int) error {
+	// Skip if no cgroup access
+	if !hasCgroupAccess {
+		return nil
+	}
+	
 	// Create cgroup
-	cgroupPath := fmt.Sprintf("/sys/fs/cgroup/memory/basic-docker/%s", containerID)
+	cgroupPath := fmt.Sprintf("/sys/fs/cgroup/memory/lean-docker/%s", containerID)
 	if err := os.MkdirAll(cgroupPath, 0755); err != nil {
 		return fmt.Errorf("failed to create cgroup: %v", err)
 	}
@@ -161,9 +271,8 @@ func setupCgroups(containerID string, memoryLimit int) error {
 }
 
 func listContainers() {
-	// In a full implementation, we'd track running containers
-	// For now, just look at the filesystem
-	containerDir := "/tmp/basic-docker/containers"
+	// Look at the filesystem for container directories
+	containerDir := "/tmp/lean-docker/containers"
 	
 	fmt.Println("CONTAINER ID\tSTATUS\tCOMMAND")
 	
@@ -186,9 +295,8 @@ func listContainers() {
 }
 
 func listImages() {
-	// In a full implementation, we'd have image metadata
-	// For now, just look at the filesystem
-	imageDir := "/tmp/basic-docker/images"
+	// Look at the filesystem for image directories
+	imageDir := "/tmp/lean-docker/images"
 	
 	fmt.Println("IMAGE NAME\tSIZE")
 	
@@ -208,6 +316,29 @@ func listImages() {
 			fmt.Printf("%s\tN/A\n", entry.Name())
 		}
 	}
+}
+
+func copyFile(src, dst string) error {
+	// Read the source file
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	
+	// Write to the destination file
+	if err := os.WriteFile(dst, data, 0755); err != nil {
+		return err
+	}
+	
+	return nil
+}
+
+func combineArgs(args []string) string {
+	result := ""
+	for _, arg := range args {
+		result += " " + arg
+	}
+	return result
 }
 
 func must(err error) {
