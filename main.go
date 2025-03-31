@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,7 +20,25 @@ var (
 	hasNamespacePrivileges = false
 	// Set to true if we have cgroup access
 	hasCgroupAccess = false
+	imagesDir = "/tmp/basic-docker/images"
+	layersDir = "/tmp/basic-docker/layers"
 )
+
+// To initialize the directories
+func initDirectories() error {
+	dirs := []string{
+		"/tmp/basic-docker/containers",
+		imagesDir,
+		layersDir,
+	}
+
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func init() {
 	// Detect if we're running in a container
@@ -46,7 +65,7 @@ func init() {
 	hasCgroupAccess = err == nil
 	if hasCgroupAccess {
 		// Try to create a test cgroup
-		testPath := filepath.Join(cgroupPath, "lean-docker-test")
+		testPath := filepath.Join(cgroupPath, "basic-docker-test")
 		hasCgroupAccess = os.MkdirAll(testPath, 0755) == nil
 		// Clean up test path
 		os.Remove(testPath)
@@ -54,6 +73,10 @@ func init() {
 
 	fmt.Printf("Environment detected: inContainer=%v, hasNamespacePrivileges=%v, hasCgroupAccess=%v\n", 
 		inContainer, hasNamespacePrivileges, hasCgroupAccess)
+
+	if err := initDirectories(); err != nil {
+		fmt.Printf("Warning: Failed to intialize directories: %v \n", err)
+	}
 }
 
 func main() {
@@ -84,10 +107,10 @@ func main() {
 
 func printUsage() {
 	fmt.Println("Usage:")
-	fmt.Println("  lean-docker run <command> [args...]  - Run a command in a container")
-	fmt.Println("  lean-docker ps                       - List running containers")
-	fmt.Println("  lean-docker images                   - List available images")
-	fmt.Println("  lean-docker info                     - Show system information")
+	fmt.Println("  basic-docker run <command> [args...]  - Run a command in a container")
+	fmt.Println("  basic-docker ps                       - List running containers")
+	fmt.Println("  basic-docker images                   - List available images")
+	fmt.Println("  basic-docker info                     - Show system information")
 }
 
 func printSystemInfo() {
@@ -106,29 +129,99 @@ func printSystemInfo() {
 }
 
 func run() {
-	// Generate a container ID
-	containerID := fmt.Sprintf("container-%d", time.Now().Unix())
-	fmt.Printf("Starting container %s\n", containerID)
+    // Generate a container ID
+    containerID := fmt.Sprintf("container-%d", time.Now().Unix())
+    fmt.Printf("Starting container %s\n", containerID)
 
-	// Create rootfs for this container
-	rootfs := filepath.Join("/tmp/lean-docker/containers", containerID, "rootfs")
-	if err := os.MkdirAll(rootfs, 0755); err != nil {
-		fmt.Printf("Error creating rootfs: %v\n", err)
-		os.Exit(1)
-	}
+    // Create rootfs for this container
+    rootfs := filepath.Join("/tmp/basic-docker/containers", containerID, "rootfs")
+    
+    // Instead of calling createMinimalRootfs directly:
+    // 1. Create a base layer if it doesn't exist
+    baseLayerID := "base-layer"
+    baseLayerPath := filepath.Join("/tmp/basic-docker/layers", baseLayerID)
+    
+    if _, err := os.Stat(baseLayerPath); os.IsNotExist(err) {
+        // Create the base layer
+        if err := os.MkdirAll(baseLayerPath, 0755); err != nil {
+            fmt.Printf("Error creating base layer directory: %v\n", err)
+            os.Exit(1)
+        }
+        
+        // Initialize the base layer with minimal rootfs content
+        must(initializeBaseLayer(baseLayerPath))
+        
+        // Save layer metadata
+        layer := ImageLayer{
+            ID:      baseLayerID,
+            Path:    baseLayerPath,
+            Created: time.Now(),
+        }
+        
+        if err := saveLayerMetadata(layer); err != nil {
+            fmt.Printf("Warning: Failed to save layer metadata: %v\n", err)
+        }
+    }
+    
+    // 2. Create an app layer for this specific container (optional)
+    appLayerID := "app-layer-" + containerID
+    appLayerPath := filepath.Join("/tmp/basic-docker/layers", appLayerID)
+    
+    // You could add container-specific files to the app layer here
+    // For now, we'll just use the base layer
+    
+    // 3. Mount the layers to create the container rootfs
+    layers := []string{baseLayerID} // Add appLayerID if you created one
+    must(mountLayeredFilesystem(layers, rootfs))
+    
+    // Now run the container with the mounted filesystem
+    if hasNamespacePrivileges && !inContainer {
+        // Full isolation approach for pure Linux environments
+        runWithNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
+    } else {
+        // Limited isolation for container environments
+        runWithoutNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
+    }
+    
+    fmt.Printf("Container %s exited\n", containerID)
+}
 
-	// Create a minimal rootfs
-	must(createMinimalRootfs(rootfs))
-
-	if hasNamespacePrivileges && !inContainer {
-		// Full isolation approach for pure Linux environments
-		runWithNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
-	} else {
-		// Limited isolation for container environments
-		runWithoutNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
-	}
-	
-	fmt.Printf("Container %s exited\n", containerID)
+func initializeBaseLayer(baseLayerPath string) error {
+    // Create essential directories in the base layer
+    dirs := []string{"/bin", "/dev", "/etc", "/proc", "/sys", "/tmp"}
+    for _, dir := range dirs {
+        if err := os.MkdirAll(filepath.Join(baseLayerPath, dir), 0755); err != nil {
+            return fmt.Errorf("failed to create directory %s: %v", dir, err)
+        }
+    }
+    
+    // Try copying busybox to the base layer
+    busyboxPath, err := exec.LookPath("busybox")
+    if err == nil {
+        if err := copyFile(busyboxPath, filepath.Join(baseLayerPath, "bin/busybox")); err != nil {
+            return fmt.Errorf("failed to copy busybox: %v", err)
+        }
+        
+        // Create symlinks for common commands in the base layer
+        for _, cmd := range []string{"sh", "ls", "echo", "cat", "ps"} {
+            linkPath := filepath.Join(baseLayerPath, "bin", cmd)
+            if err := os.Symlink("busybox", linkPath); err != nil {
+                fmt.Printf("Warning: Failed to create symlink for %s: %v\n", cmd, err)
+            }
+        }
+    } else {
+        // Copy basic binaries from host if busybox is not available
+        for _, cmd := range []string{"sh", "ls", "echo", "cat"} {
+            cmdPath, err := exec.LookPath(cmd)
+            if err == nil {
+                if err := copyFile(cmdPath, filepath.Join(baseLayerPath, "bin", filepath.Base(cmdPath))); err != nil {
+                    fmt.Printf("Warning: Failed to copy %s: %v\n", cmd, err)
+                }
+            }
+        }
+    }
+    
+    return nil
 }
 
 // runWithNamespaces uses full Linux namespace isolation
@@ -206,7 +299,19 @@ func createMinimalRootfs(rootfs string) error {
 			return fmt.Errorf("failed to create directory %s: %v", dir, err)
 		}
 	}
-	
+
+	// Create a base layer
+	baseLayerID := "base-layer-" + fmt.Sprintf("%d", time.now().Unix())
+	baseLayerPath := filepath.Join(layersDir, baseLayerID)
+	if err := os.MkdirAll(baseLayerPath, 0755); err != nil {
+		return fmt.Errorf("failed to create base layer: %v", err)
+	}
+
+	// Create a bin directory in the base layer
+	if err := os.MkdirAll(filepath.Join(baseLayerPath, "bin"), 0755); err != nil {
+		return fmt.Errorf("failed to create bin directory in base layer: %v", err)
+	}
+
 	// Try copying busybox if available
 	busyboxPath, err := exec.LookPath("busybox")
 	if err == nil {
@@ -232,7 +337,89 @@ func createMinimalRootfs(rootfs string) error {
 			}
 		}
 	}
+
+	// Now copy the base layer to the rootfs
+	if err := copyDir(baseLayerPath, rootfs); err != nil {
+		return fmt.Errorf("failed to copy base layer to rootfs: %v", err)
+	}
 	
+	// Create a record of this layer
+	layer := ImageLayer{
+		ID: baseLayerID,
+		Path: baseLayerPath,
+		Created: time.Now(),
+	}
+
+	// Save layer metadata
+	if err := saveLayerMedata(layer); err != nil {
+		fmt.Printf("Warning: Failed to save layer metadata: %v\n", err)
+	}
+
+	return nil
+}
+
+// Add this function to copy directories
+func copyDir(src, dst string) error {
+    return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+        if err != nil {
+            return err
+        }
+        
+        // Calculate relative path
+        relPath, err := filepath.Rel(src, path)
+        if err != nil {
+            return err
+        }
+        
+        // Skip if it's the root directory
+        if relPath == "." {
+            return nil
+        }
+        
+        // Create target path
+        targetPath := filepath.Join(dst, relPath)
+        
+        // If it's a directory, create it
+        if info.IsDir() {
+            return os.MkdirAll(targetPath, info.Mode())
+        }
+        
+        // If it's a file, copy it
+        return copyFile(path, targetPath)
+    })
+}
+
+// Add this function to save layer metadata
+func saveLayerMedata(layer ImageLayer) error {
+	// Convert layer to JSON
+	data, err := json.Marshal(layer)
+	if err != nil {
+		return err
+	}
+
+	// Write to a file
+	metadataPath := filepath.Join(layersDir, layer.ID+".json")
+	return os.WriteFile(metadataPath, data, 0644)
+}
+
+func mountLayeredFilesystem(layers []string, rootfs string) error {
+	// Clear the rootfs first
+	if err := os.RemoveAll(rootfs); err != nil {
+		return fmt.Errorf("failed to clear rootfs: %v", err)
+	}
+
+	if err := os.MkdirAll(rootfs, 0755); err != nil {
+		return fmt.Errorf("failed to create rootfs: %v", err)
+	}
+
+	// Start from the base layer and apply each layer
+	for _, layerID := range layers {
+		layerPath := filepath.Join(layersDir, layerID)
+		if err := copyDir(layerPath, rootfs); err != nil {
+			return fmt.Errorf("failed to apply layer %s: %v", layerID, err)
+		}
+	}
+
 	return nil
 }
 
@@ -243,7 +430,7 @@ func setupCgroups(containerID string, memoryLimit int) error {
 	}
 	
 	// Create cgroup
-	cgroupPath := fmt.Sprintf("/sys/fs/cgroup/memory/lean-docker/%s", containerID)
+	cgroupPath := fmt.Sprintf("/sys/fs/cgroup/memory/basic-docker/%s", containerID)
 	if err := os.MkdirAll(cgroupPath, 0755); err != nil {
 		return fmt.Errorf("failed to create cgroup: %v", err)
 	}
@@ -272,7 +459,7 @@ func setupCgroups(containerID string, memoryLimit int) error {
 
 func listContainers() {
 	// Look at the filesystem for container directories
-	containerDir := "/tmp/lean-docker/containers"
+	containerDir := "/tmp/basic-docker/containers"
 	
 	fmt.Println("CONTAINER ID\tSTATUS\tCOMMAND")
 	
@@ -296,7 +483,7 @@ func listContainers() {
 
 func listImages() {
 	// Look at the filesystem for image directories
-	imageDir := "/tmp/lean-docker/images"
+	imageDir := "/tmp/basic-docker/images"
 	
 	fmt.Println("IMAGE NAME\tSIZE")
 	
@@ -346,4 +533,58 @@ func must(err error) {
 		fmt.Println("Error:", err)
 		os.Exit(1)
 	}
+}
+
+func testMultiLayerMount() {
+    // Create a base layer
+    baseLayerID := "base-layer-" + fmt.Sprintf("%d", time.Now().Unix())
+    baseLayerPath := filepath.Join("/tmp/basic-docker/layers", baseLayerID)
+    if err := os.MkdirAll(baseLayerPath, 0755); err != nil {
+        fmt.Printf("Error creating base layer: %v\n", err)
+        return
+    }
+    
+    // Add a file to the base layer
+    if err := os.WriteFile(filepath.Join(baseLayerPath, "base.txt"), []byte("Base layer file"), 0644); err != nil {
+        fmt.Printf("Error creating base layer file: %v\n", err)
+        return
+    }
+    
+    // Create a second layer
+    appLayerID := "app-layer-" + fmt.Sprintf("%d", time.Now().Unix())
+    appLayerPath := filepath.Join("/tmp/basic-docker/layers", appLayerID)
+    if err := os.MkdirAll(appLayerPath, 0755); err != nil {
+        fmt.Printf("Error creating app layer: %v\n", err)
+        return
+    }
+    
+    // Add a file to the app layer
+    if err := os.WriteFile(filepath.Join(appLayerPath, "app.txt"), []byte("App layer file"), 0644); err != nil {
+        fmt.Printf("Error creating app layer file: %v\n", err)
+        return
+    }
+    
+    // Create a target directory
+    targetPath := filepath.Join("/tmp/basic-docker/test-mount")
+    
+    // Mount the layers
+    layers := []string{baseLayerID, appLayerID}
+    if err := mountLayeredFilesystem(layers, targetPath); err != nil {
+        fmt.Printf("Error mounting layers: %v\n", err)
+        return
+    }
+    
+    // Check if files exist
+    if _, err := os.Stat(filepath.Join(targetPath, "base.txt")); err != nil {
+        fmt.Printf("Base layer file not found: %v\n", err)
+        return
+    }
+    
+    if _, err := os.Stat(filepath.Join(targetPath, "app.txt")); err != nil {
+        fmt.Printf("App layer file not found: %v\n", err)
+        return
+    }
+    
+    fmt.Println("Multi-layer mount test successful!")
+    fmt.Printf("Mounted layers at: %s\n", targetPath)
 }
