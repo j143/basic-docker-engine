@@ -5,8 +5,12 @@
 mkdir -p /tmp/basic-docker/containers
 mkdir -p /tmp/basic-docker/images
 
-# Build the basic-docker binary
-go build -o basic-docker main.go
+# Build the basic-docker binary with error handling
+echo "==== Building Project ===="
+if ! go build -o basic-docker main.go; then
+    echo "Error: Build failed. Please check the errors above." >&2
+    exit 1
+fi
 
 # Display system information
 echo "==== System Information ===="

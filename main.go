@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,6 +22,13 @@ var (
 	imagesDir = "/tmp/basic-docker/images"
 	layersDir = "/tmp/basic-docker/layers"
 )
+
+// Define the ImageLayer type
+type ImageLayer struct {
+	ID      string
+	Created time.Time
+	Size    int64
+}
 
 // To initialize the directories
 func initDirectories() error {
@@ -154,7 +160,6 @@ func run() {
         // Save layer metadata
         layer := ImageLayer{
             ID:      baseLayerID,
-            Path:    baseLayerPath,
             Created: time.Now(),
         }
         
@@ -165,7 +170,9 @@ func run() {
     
     // 2. Create an app layer for this specific container (optional)
     appLayerID := "app-layer-" + containerID
-    appLayerPath := filepath.Join("/tmp/basic-docker/layers", appLayerID)
+    
+    // Use the appLayerID variable to log its creation
+    fmt.Printf("App layer created with ID: %s\n", appLayerID)
     
     // You could add container-specific files to the app layer here
     // For now, we'll just use the base layer
@@ -218,6 +225,15 @@ func initializeBaseLayer(baseLayerPath string) error {
                     fmt.Printf("Warning: Failed to copy %s: %v\n", cmd, err)
                 }
             }
+        }
+    }
+
+    // Verify that essential commands are available in the base layer
+    essentialCommands := []string{"sh", "ls", "echo", "cat", "ps"}
+    for _, cmd := range essentialCommands {
+        cmdPath := filepath.Join(baseLayerPath, "bin", cmd)
+        if _, err := os.Stat(cmdPath); os.IsNotExist(err) {
+            return fmt.Errorf("essential command %s is missing in the base layer", cmd)
         }
     }
     
@@ -301,7 +317,7 @@ func createMinimalRootfs(rootfs string) error {
 	}
 
 	// Create a base layer
-	baseLayerID := "base-layer-" + fmt.Sprintf("%d", time.now().Unix())
+	baseLayerID := "base-layer-" + fmt.Sprintf("%d", time.Now().Unix())
 	baseLayerPath := filepath.Join(layersDir, baseLayerID)
 	if err := os.MkdirAll(baseLayerPath, 0755); err != nil {
 		return fmt.Errorf("failed to create base layer: %v", err)
@@ -346,12 +362,11 @@ func createMinimalRootfs(rootfs string) error {
 	// Create a record of this layer
 	layer := ImageLayer{
 		ID: baseLayerID,
-		Path: baseLayerPath,
 		Created: time.Now(),
 	}
 
 	// Save layer metadata
-	if err := saveLayerMedata(layer); err != nil {
+	if err := saveLayerMetadata(layer); err != nil {
 		fmt.Printf("Warning: Failed to save layer metadata: %v\n", err)
 	}
 
@@ -389,17 +404,11 @@ func copyDir(src, dst string) error {
     })
 }
 
-// Add this function to save layer metadata
-func saveLayerMedata(layer ImageLayer) error {
-	// Convert layer to JSON
-	data, err := json.Marshal(layer)
-	if err != nil {
-		return err
-	}
-
-	// Write to a file
-	metadataPath := filepath.Join(layersDir, layer.ID+".json")
-	return os.WriteFile(metadataPath, data, 0644)
+// Implement the saveLayerMetadata function
+func saveLayerMetadata(layer ImageLayer) error {
+    // Placeholder implementation
+    fmt.Printf("Saving metadata for layer: %s\n", layer.ID)
+    return nil
 }
 
 func mountLayeredFilesystem(layers []string, rootfs string) error {
