@@ -178,6 +178,8 @@ graph TD
         Pull["Pull Function"]
         ListImages["ListImages Function"]
         ExtractLayer["extractLayer Function"]
+        Pull -->|Downloads| Layers
+        Layers -->|Processes| ExtractLayer
     end
 
     subgraph Main Application
