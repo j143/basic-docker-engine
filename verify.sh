@@ -43,4 +43,18 @@ else
     echo -e "\n\n==== Skipping isolation tests (needs root) ===="
 fi
 
+
+# Test the docker exec functionality
+container_id=$(sudo ./basic-docker run /bin/sh -c "sleep 10" & echo $!)
+sudo ./basic-docker ps
+echo -e "\n\n==== Testing Docker Exec ===="
+if sudo ./basic-docker exec $container_id ls /; then
+    echo "[PASS] Docker exec command executed successfully."
+else
+    echo "[FAIL] Docker exec command failed."
+fi
+
+# Clean up the container
+kill $container_id 2>/dev/null
+
 echo -e "\n\n==== All tests completed ===="
