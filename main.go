@@ -222,32 +222,23 @@ func initializeBaseLayer(baseLayerPath string) error {
     // Retain baseLayerPath for potential future use
     fmt.Printf("Base layer path: %s\n", baseLayerPath)
 
-    // Handle busybox existence more gracefully
+    // Ensure busybox is properly copied and symlinks are created
     if busyboxPath, err := exec.LookPath("busybox"); err == nil {
         fmt.Printf("Busybox found at: %s\n", busyboxPath)
-        // Try copying busybox to the base layer
         if err := copyFile(busyboxPath, filepath.Join(baseLayerPath, "bin/busybox")); err != nil {
             return fmt.Errorf("failed to copy busybox: %v", err)
         }
-        
-        // Create symlinks for common commands in the base layer
-        for _, cmd := range []string{"sh", "ls", "echo", "cat", "ps"} {
+
+        // Create symlinks for common commands
+        commands := []string{"sh", "ls", "echo", "cat", "ps"}
+        for _, cmd := range commands {
             linkPath := filepath.Join(baseLayerPath, "bin", cmd)
             if err := os.Symlink("busybox", linkPath); err != nil {
                 fmt.Printf("Warning: Failed to create symlink for %s: %v\n", cmd, err)
             }
         }
     } else {
-        fmt.Println("Busybox not found. Falling back to copying individual binaries.")
-        // Copy basic binaries from host if busybox is not available
-        for _, cmd := range []string{"sh", "ls", "echo", "cat"} {
-            cmdPath, err := exec.LookPath(cmd)
-            if err == nil {
-                if err := copyFile(cmdPath, filepath.Join(baseLayerPath, "bin", filepath.Base(cmdPath))); err != nil {
-                    fmt.Printf("Warning: Failed to copy %s: %v\n", cmd, err)
-                }
-            }
-        }
+        return fmt.Errorf("busybox not found in the host system")
     }
 
     // Verify that essential commands are available in the base layer
@@ -258,6 +249,73 @@ func initializeBaseLayer(baseLayerPath string) error {
             return fmt.Errorf("essential command %s is missing in the base layer", cmd)
         }
     }
+
+    // Debugging: Verify that busybox and symlinks are correctly set up
+    busyboxPath := filepath.Join(baseLayerPath, "bin/busybox")
+    if _, err := os.Stat(busyboxPath); os.IsNotExist(err) {
+        return fmt.Errorf("busybox binary is missing in the base layer: %s", busyboxPath)
+    }
+
+    for _, cmd := range []string{"sh", "ls", "echo", "cat", "ps"} {
+        symlinkPath := filepath.Join(baseLayerPath, "bin", cmd)
+        if _, err := os.Lstat(symlinkPath); os.IsNotExist(err) {
+            return fmt.Errorf("symlink for %s is missing in the base layer: %s", cmd, symlinkPath)
+        }
+    }
+
+    // Debugging: Verify the correctness of the sh symlink
+    shSymlinkPath := filepath.Join(baseLayerPath, "bin/sh")
+    if target, err := os.Readlink(shSymlinkPath); err != nil {
+        return fmt.Errorf("failed to read symlink for sh: %v", err)
+    } else if target != "busybox" {
+        return fmt.Errorf("sh symlink does not point to busybox: %s", target)
+    }
+
+    fmt.Printf("Verified: sh symlink correctly points to busybox at %s\n", shSymlinkPath)
+
+    // Debugging: Verify busybox and symlinks in the container's rootfs
+    rootfsBusyboxPath := filepath.Join(baseLayerPath, "bin/busybox")
+    if _, err := os.Stat(rootfsBusyboxPath); os.IsNotExist(err) {
+        return fmt.Errorf("busybox binary is missing in the container's rootfs: %s", rootfsBusyboxPath)
+    }
+
+    for _, cmd := range []string{"sh", "ls", "echo", "cat", "ps"} {
+        symlinkPath := filepath.Join(baseLayerPath, "bin", cmd)
+        if _, err := os.Lstat(symlinkPath); os.IsNotExist(err) {
+            return fmt.Errorf("symlink for %s is missing in the container's rootfs: %s", cmd, symlinkPath)
+        }
+    }
+
+    fmt.Printf("Verified: busybox and symlinks are correctly set up in the container's rootfs.\n")
+
+    // Debugging: Verify that the echo binary and symlink are correctly set up
+    echoPath := filepath.Join(baseLayerPath, "bin/echo")
+    if _, err := os.Lstat(echoPath); os.IsNotExist(err) {
+        return fmt.Errorf("echo binary or symlink is missing in the base layer: %s", echoPath)
+    }
+
+    fmt.Printf("Verified: echo binary or symlink exists at %s\n", echoPath)
+
+    // Debugging: List contents of the /bin directory in the base layer
+    binDir := filepath.Join(baseLayerPath, "bin")
+    entries, err := os.ReadDir(binDir)
+    if err != nil {
+        return fmt.Errorf("failed to read /bin directory: %v", err)
+    }
+    fmt.Println("Contents of /bin directory:")
+    for _, entry := range entries {
+        fmt.Printf("- %s\n", entry.Name())
+    }
+
+    // Debugging: Attempt to execute busybox directly
+    busyboxTestCmd := exec.Command(filepath.Join(binDir, "busybox"), "--help")
+    busyboxTestCmd.Stdout = os.Stdout
+    busyboxTestCmd.Stderr = os.Stderr
+    if err := busyboxTestCmd.Run(); err != nil {
+        return fmt.Errorf("failed to execute busybox: %v", err)
+    }
+
+    fmt.Println("Busybox and symlinks are correctly set up in the base layer.")
     
     return nil
 }
