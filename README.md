@@ -137,6 +137,28 @@ flowchart TB
     class DETECT,PRIV,CGROUP highlight
 ```
 
+## Image Build Logic
+
+```mermaid
+graph TD
+    A[Start] --> B[Check if Base Layer Exists]
+    B -->|Yes| C[Load Base Layer Metadata]
+    B -->|No| D[Create Base Layer]
+    D --> E[Initialize Base Layer with Minimal Rootfs]
+    E --> F[Save Base Layer Metadata]
+    C --> G[Create App Layer]
+    G --> H[Add Container-Specific Files to App Layer]
+    H --> I[Save App Layer Metadata]
+    F --> G
+    I --> J[Mount Layers to Create Rootfs]
+    J --> K[Run Container with Rootfs]
+    K --> L[End]
+```
+
+The logic implemented for building images and running containers in the basic Docker engine.
+It starts by checking if the base layer exists, initializes it if necessary, and then creates an app layer for container-specific files.
+Finally, the layers are mounted to create the root filesystem, and the container is executed.
+
 ## Basic docker prompts
 
 ### `basic-docker info`
