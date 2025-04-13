@@ -1,8 +1,13 @@
 package main
 
 import (
+	"archive/tar"
+	"bufio"
 	"encoding/json"
+	"encoding/base64"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,6 +37,50 @@ type ImageLayer struct {
 	Size          int64
 	BaseLayerPath string
 	AppLayerPath  string
+}
+
+// Load configuration from a .basic-docker-config file
+func loadConfig() map[string]string {
+    config := map[string]string{} // Initialize an empty configuration map
+
+    configFile := ".basic-docker-config" // Use the config file in the current directory
+    fmt.Printf("Debug: Looking for config file at %s\n", configFile)
+
+    if _, err := os.Stat(configFile); err != nil {
+        if os.IsNotExist(err) {
+            fmt.Printf("Error: Config file not found at %s\n", configFile)
+        } else {
+            fmt.Printf("Error: Failed to access config file: %v\n", err)
+        }
+        return config
+    }
+
+    file, err := os.Open(configFile)
+    if err != nil {
+        fmt.Printf("Error: Failed to open config file: %v\n", err)
+        return config
+    }
+    defer file.Close()
+
+    scanner := bufio.NewScanner(file)
+    for scanner.Scan() {
+        line := strings.TrimSpace(scanner.Text())
+        if line == "" || strings.HasPrefix(line, "#") {
+            continue // Skip empty lines and comments
+        }
+        parts := strings.SplitN(line, "=", 2)
+        if len(parts) == 2 {
+            key := strings.TrimSpace(parts[0])
+            value := strings.TrimSpace(parts[1])
+            config[key] = value
+        }
+    }
+    if err := scanner.Err(); err != nil {
+        fmt.Printf("Error: Failed to read config file: %v\n", err)
+    }
+
+    fmt.Printf("Debug: Loaded config: %v\n", config)
+    return config
 }
 
 // To initialize the directories
@@ -118,6 +167,16 @@ func main() {
 		printSystemInfo()
 	case "exec":
 		execCommand()
+	case "delete":
+		if len(os.Args) < 3 {
+			fmt.Println("Error: Image name required for delete")
+			os.Exit(1)
+		}
+		imageName := os.Args[2]
+		if err := deleteImage(imageName); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])
 		printUsage()
@@ -132,6 +191,7 @@ func printUsage() {
 	fmt.Println("  basic-docker images                   - List available images")
 	fmt.Println("  basic-docker info                     - Show system information")
 	fmt.Println("  basic-docker exec <container-id> <command> [args...] - Execute a command in a running container")
+	fmt.Println("  basic-docker delete <image-name>      - Delete a Docker image")
 }
 
 func printSystemInfo() {
@@ -237,23 +297,22 @@ func run() {
         os.Exit(1)
     }
     
-    // Fix deadlock by adding a timeout mechanism
+    // Check if a command is provided
     if len(os.Args) < 4 {
-        fmt.Println("No command provided. Keeping the container process alive with a timeout.")
-        timeout := time.After(10 * time.Minute) // Set a timeout of 10 minutes
-        select {
-        case <-timeout:
-            fmt.Println("Timeout reached. Exiting container process.")
-            os.Exit(0)
-        }
+        fmt.Println("Error: No command provided to run inside the container.")
+        os.Exit(1)
     }
+
+    // Extract the command and its arguments
+    command := os.Args[3]
+    args := os.Args[4:]
 
     // Update the fallback logic to avoid using unshare entirely in limited isolation
     if hasNamespacePrivileges && !inContainer {
         // Full isolation approach for pure Linux environments
-        runWithNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
+        runWithNamespaces(containerID, rootfs, command, args)
     } else {
-        runWithoutNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
+        runWithoutNamespaces(containerID, rootfs, command, args)
     }
     
     fmt.Printf("Container %s exited\n", containerID)
@@ -813,11 +872,230 @@ func atoi(s string) int {
 	return result
 }
 
+// Update fetchImage to use Docker Registry HTTP API v2
 func fetchImage(imageName string) error {
-	// Placeholder function for fetching an image
-	fmt.Printf("Fetching image '%s'...\n", imageName)
-	// Simulate fetching the image
-	time.Sleep(2 * time.Second)
-	fmt.Printf("Image '%s' fetched successfully.\n", imageName)
-	return nil
+    // Load configuration from a .basic-docker-config file
+    config := loadConfig()
+
+    // Split the image name into repository and tag
+    parts := strings.Split(imageName, ":")
+    repository := parts[0]
+    tag := "latest" // Default to 'latest' if no tag is provided
+    if len(parts) > 1 {
+        tag = parts[1]
+    }
+
+    // Adjust repository name for Docker Hub
+    if strings.HasPrefix(repository, "library/") {
+        repository = strings.TrimPrefix(repository, "library/")
+    }
+
+    // Authenticate with the Docker registry to obtain a token
+    username, usernameExists := config["username"]
+    password, passwordExists := config["password"]
+
+    if !usernameExists || !passwordExists {
+        return fmt.Errorf("Error: Docker registry credentials (username and password) are missing in the configuration.")
+    }
+
+    authURL := fmt.Sprintf("https://auth.docker.io/token?service=registry.docker.io&scope=repository:%s:pull", repository)
+
+    // Log the authentication URL and repository name for debugging
+    fmt.Printf("Debug: Authentication URL: %s\n", authURL)
+    fmt.Printf("Debug: Repository: %s\n", repository)
+
+    req, err := http.NewRequest("GET", authURL, nil)
+    if err != nil {
+        return fmt.Errorf("Failed to create authentication request: %v", err)
+    }
+
+    // Use the PAT as the password for authentication
+    req.SetBasicAuth(username, password) // Here, 'password' is the PAT
+
+    authResp, err := http.DefaultClient.Do(req)
+    if err != nil {
+        return fmt.Errorf("Failed to authenticate with Docker registry: %v", err)
+    }
+    defer authResp.Body.Close()
+
+    if authResp.StatusCode != http.StatusOK {
+        return fmt.Errorf("Failed to authenticate with Docker registry: received status code %d", authResp.StatusCode)
+    }
+
+    // Log the full response body for debugging
+    authRespBody, err := io.ReadAll(authResp.Body)
+    if err != nil {
+        return fmt.Errorf("Failed to read authentication response body: %v", err)
+    }
+    fmt.Printf("Debug: Authentication response body: %s\n", string(authRespBody))
+
+    // Decode the authentication response
+    var authData map[string]interface{}
+    if err := json.Unmarshal(authRespBody, &authData); err != nil {
+        return fmt.Errorf("Failed to decode authentication response: %v", err)
+    }
+
+    token, ok := authData["token"].(string)
+    if !ok {
+        return fmt.Errorf("Failed to retrieve token from authentication response")
+    }
+
+    // Decode and log the token payload for debugging (if it's a JWT)
+    parts = strings.Split(token, ".")
+    if len(parts) == 3 {
+        payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+        if err == nil {
+            fmt.Printf("Debug: Token payload: %s\n", string(payload))
+        } else {
+            fmt.Printf("Warning: Failed to decode token payload: %v\n", err)
+        }
+    }
+
+    // Log the full manifest request for debugging
+    manifestURL := fmt.Sprintf("https://registry-1.docker.io/v2/%s/manifests/%s", repository, tag)
+    fmt.Printf("Debug: Manifest request URL: %s\n", manifestURL)
+    fmt.Printf("Debug: Authorization header: Bearer %s\n", token)
+
+    req, err = http.NewRequest("GET", manifestURL, nil)
+    if err != nil {
+        return fmt.Errorf("Failed to create manifest request: %v", err)
+    }
+    req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil {
+        return fmt.Errorf("Failed to fetch manifest: %v", err)
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode != http.StatusOK {
+        respBody, _ := io.ReadAll(resp.Body)
+        fmt.Printf("Debug: Manifest response body: %s\n", string(respBody))
+        return fmt.Errorf("Failed to fetch manifest: received status code %d", resp.StatusCode)
+    }
+
+    var manifest map[string]interface{}
+    if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+        return fmt.Errorf("Failed to decode manifest: %v", err)
+    }
+
+    fmt.Printf("Manifest fetched successfully: %v\n", manifest)
+
+    // Extract and download layers
+    layers, ok := manifest["layers"].([]interface{})
+    if !ok {
+        return fmt.Errorf("Invalid manifest format: missing layers")
+    }
+
+    imagePath := filepath.Join(imagesDir, imageName)
+    if err := os.MkdirAll(imagePath, 0755); err != nil {
+        return fmt.Errorf("Failed to create image directory: %v", err)
+    }
+
+    for _, layer := range layers {
+        layerMap, ok := layer.(map[string]interface{})
+        if !ok {
+            return fmt.Errorf("Invalid layer format")
+        }
+
+        layerURL, ok := layerMap["url"].(string)
+        if !ok {
+            return fmt.Errorf("Invalid layer format: missing URL")
+        }
+
+        fmt.Printf("Downloading layer from %s\n", layerURL)
+
+        layerResp, err := http.Get(layerURL)
+        if err != nil {
+            return fmt.Errorf("Failed to download layer: %v", err)
+        }
+        defer layerResp.Body.Close()
+
+        if layerResp.StatusCode != http.StatusOK {
+            return fmt.Errorf("Failed to download layer: received status code %d", layerResp.StatusCode)
+        }
+
+        layerFile := filepath.Join(imagePath, filepath.Base(layerURL))
+        outFile, err := os.Create(layerFile)
+        if err != nil {
+            return fmt.Errorf("Failed to create layer file: %v", err)
+        }
+        defer outFile.Close()
+
+        if _, err := io.Copy(outFile, layerResp.Body); err != nil {
+            return fmt.Errorf("Failed to save layer: %v", err)
+        }
+
+        fmt.Printf("Layer saved to %s\n", layerFile)
+    }
+
+    fmt.Printf("Image '%s' fetched and saved successfully.\n", imageName)
+    return nil
+}
+
+func deleteImage(imageName string) error {
+    // Construct the image path
+    imagePath := filepath.Join(imagesDir, imageName)
+
+    // Check if the image exists
+    if _, err := os.Stat(imagePath); os.IsNotExist(err) {
+        return fmt.Errorf("Image '%s' does not exist", imageName)
+    }
+
+    // Remove the image directory
+    if err := os.RemoveAll(imagePath); err != nil {
+        return fmt.Errorf("Failed to delete image '%s': %v", imageName)
+    }
+
+    fmt.Printf("Image '%s' deleted successfully.\n", imageName)
+    return nil
+}
+
+func extractTar(tarFile, destDir string) error {
+    // Open the tar file
+    file, err := os.Open(tarFile)
+    if err != nil {
+        return fmt.Errorf("failed to open tar file: %v", err)
+    }
+    defer file.Close()
+
+    // Create a tar reader
+    tarReader := tar.NewReader(file)
+
+    // Extract files from the tar archive
+    for {
+        header, err := tarReader.Next()
+        if err == io.EOF {
+            break // End of archive
+        }
+        if err != nil {
+            return fmt.Errorf("failed to read tar header: %v", err)
+        }
+
+        // Determine the target path
+        targetPath := filepath.Join(destDir, header.Name)
+
+        switch header.Typeflag {
+        case tar.TypeDir:
+            // Create directories
+            if err := os.MkdirAll(targetPath, os.FileMode(header.Mode)); err != nil {
+                return fmt.Errorf("failed to create directory: %v", err)
+            }
+        case tar.TypeReg:
+            // Create files
+            outFile, err := os.Create(targetPath)
+            if err != nil {
+                return fmt.Errorf("failed to create file: %v", err)
+            }
+            defer outFile.Close()
+
+            if _, err := io.Copy(outFile, tarReader); err != nil {
+                return fmt.Errorf("failed to write file: %v", err)
+            }
+        default:
+            return fmt.Errorf("unsupported tar entry type: %v", header.Typeflag)
+        }
+    }
+
+    return nil
 }

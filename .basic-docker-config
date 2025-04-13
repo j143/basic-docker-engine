@@ -1,0 +1,3 @@
+# Configuration file for basic-docker
+# Default registry URL
+registryURL=https://registry.hub.docker.com/v2/repositories/
