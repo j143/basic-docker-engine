@@ -26,9 +26,11 @@ var (
 
 // Define the ImageLayer type
 type ImageLayer struct {
-	ID      string
-	Created time.Time
-	Size    int64
+	ID            string
+	Created       time.Time
+	Size          int64
+	BaseLayerPath string
+	AppLayerPath  string
 }
 
 // To initialize the directories
@@ -160,8 +162,9 @@ func run() {
         
         // Save layer metadata
         layer := ImageLayer{
-            ID:      baseLayerID,
-            Created: time.Now(),
+            ID:            baseLayerID,
+            Created:       time.Now(),
+            BaseLayerPath: baseLayerPath,
         }
         
         if err := saveLayerMetadata(layer); err != nil {
@@ -171,12 +174,25 @@ func run() {
     
     // 2. Create an app layer for this specific container (optional)
     appLayerID := "app-layer-" + containerID
+    appLayerPath := filepath.Join("/tmp/basic-docker/layers", appLayerID)
     
     // Use the appLayerID variable to log its creation
     fmt.Printf("App layer created with ID: %s\n", appLayerID)
     
     // You could add container-specific files to the app layer here
     // For now, we'll just use the base layer
+    
+    // Save layer metadata including app layer path
+    layer := ImageLayer{
+        ID:            appLayerID,
+        Created:       time.Now(),
+        BaseLayerPath: baseLayerPath,
+        AppLayerPath:  appLayerPath,
+    }
+
+    if err := saveLayerMetadata(layer); err != nil {
+        fmt.Printf("Warning: Failed to save layer metadata: %v\n", err)
+    }
     
     // 3. Mount the layers to create the container rootfs
     layers := []string{baseLayerID} // Add appLayerID if you created one
@@ -367,8 +383,9 @@ func createMinimalRootfs(rootfs string) error {
 	
 	// Create a record of this layer
 	layer := ImageLayer{
-		ID: baseLayerID,
-		Created: time.Now(),
+		ID:            baseLayerID,
+		Created:       time.Now(),
+		BaseLayerPath: baseLayerPath,
 	}
 
 	// Save layer metadata
