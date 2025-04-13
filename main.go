@@ -49,6 +49,14 @@ func initDirectories() error {
 	return nil
 }
 
+func ensureBusyboxExists() {
+	if _, err := exec.LookPath("busybox"); err != nil {
+		fmt.Println("Error: busybox is not found on the host system.")
+		fmt.Println("Please install busybox to enable isolation features.")
+		os.Exit(1)
+	}
+}
+
 func init() {
 	// Detect if we're running in a container
 	if _, err := os.Stat("/.dockerenv"); err == nil {
@@ -107,6 +115,8 @@ func main() {
 		listImages()
 	case "info":
 		printSystemInfo()
+	case "exec":
+		execCommand()
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])
 		printUsage()
@@ -120,6 +130,7 @@ func printUsage() {
 	fmt.Println("  basic-docker ps                       - List running containers")
 	fmt.Println("  basic-docker images                   - List available images")
 	fmt.Println("  basic-docker info                     - Show system information")
+	fmt.Println("  basic-docker exec <container-id> <command> [args...] - Execute a command in a running container")
 }
 
 func printSystemInfo() {
@@ -198,6 +209,13 @@ func run() {
     layers := []string{baseLayerID} // Add appLayerID if you created one
     must(mountLayeredFilesystem(layers, rootfs))
     
+    // Write the PID of the current process to a file
+    pidFile := filepath.Join("/tmp/basic-docker/containers", containerID, "pid")
+    if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
+        fmt.Printf("Error: Failed to write PID file for container %s: %v\n", containerID, err)
+        os.Exit(1)
+    }
+    
     // Update the fallback logic to avoid using unshare entirely in limited isolation
     if hasNamespacePrivileges && !inContainer {
         // Full isolation approach for pure Linux environments
@@ -237,7 +255,7 @@ func initializeBaseLayer(baseLayerPath string) error {
             }
         }
     } else {
-        return fmt.Errorf("busybox not found in the host system")
+        return fallbackToHostBinaries(baseLayerPath)
     }
 
     // Verify that essential commands are available in the base layer
@@ -538,26 +556,41 @@ func setupCgroups(containerID string, memoryLimit int) error {
 	return nil
 }
 
+func getContainerStatus(containerID string) string {
+	pidFile := filepath.Join("/tmp/basic-docker/containers", containerID, "pid")
+	pidData, err := os.ReadFile(pidFile)
+	if err != nil {
+		return "Stopped"
+	}
+
+	pid := strings.TrimSpace(string(pidData))
+	procPath := fmt.Sprintf("/proc/%s", pid)
+	if _, err := os.Stat(procPath); os.IsNotExist(err) {
+		return "Stopped"
+	}
+
+	return "Running"
+}
+
 func listContainers() {
-	// Look at the filesystem for container directories
 	containerDir := "/tmp/basic-docker/containers"
-	
 	fmt.Println("CONTAINER ID\tSTATUS\tCOMMAND")
-	
-	// Check if directory exists
+
 	if _, err := os.Stat(containerDir); os.IsNotExist(err) {
 		return
 	}
-	
+
 	entries, err := os.ReadDir(containerDir)
 	if err != nil {
 		fmt.Printf("Error reading containers: %v\n", err)
 		return
 	}
-	
+
 	for _, entry := range entries {
 		if entry.IsDir() {
-			fmt.Printf("%s\tN/A\tN/A\n", entry.Name())
+			containerID := entry.Name()
+			status := getContainerStatus(containerID)
+			fmt.Printf("%s\t%s\tN/A\n", containerID, status)
 		}
 	}
 }
@@ -671,4 +704,76 @@ func testMultiLayerMount() {
     
     fmt.Println("Multi-layer mount test successful!")
     fmt.Printf("Mounted layers at: %s\n", targetPath)
+}
+
+func execCommand() {
+	if len(os.Args) < 4 {
+		fmt.Println("Error: Container ID and command required for exec")
+		os.Exit(1)
+	}
+
+	containerID := os.Args[2]
+	command := os.Args[3]
+	args := os.Args[4:]
+
+	// Check if the container directory exists
+	containerDir := filepath.Join("/tmp/basic-docker/containers", containerID)
+	if _, err := os.Stat(containerDir); os.IsNotExist(err) {
+		fmt.Printf("Error: Container %s does not exist. Please ensure the container is running.\n", containerID)
+		os.Exit(1)
+	}
+
+	// Locate the PID of the container
+	pidFile := fmt.Sprintf("/tmp/basic-docker/containers/%s/pid", containerID)
+	pidData, err := os.ReadFile(pidFile)
+	if err != nil {
+		fmt.Printf("Error: Failed to read PID file for container %s: %v\n", containerID, err)
+		os.Exit(1)
+	}
+
+	pid := strings.TrimSpace(string(pidData))
+
+	// Verify if the process with the given PID exists
+	procPath := fmt.Sprintf("/proc/%s", pid)
+	if _, err := os.Stat(procPath); os.IsNotExist(err) {
+		fmt.Printf("Error: Process with PID %s does not exist. The container might not be running.\n", pid)
+		os.Exit(1)
+	}
+
+	// Attach to the container's namespace and execute the command
+	nsPath := fmt.Sprintf("/proc/%s/ns/mnt", pid)
+	cmd := exec.Command("nsenter", "--mount="+nsPath, "--pid="+fmt.Sprintf("/proc/%s/ns/pid", pid), "--", command)
+	cmd.Args = append(cmd.Args, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Error: Failed to execute command in container %s: %v\n", containerID, err)
+		os.Exit(1)
+	}
+}
+
+func fallbackToHostBinaries(rootfs string) error {
+	fmt.Println("Warning: Falling back to host binaries as busybox is not available.")
+
+	// List of essential commands to copy from the host system
+	hostCommands := []string{"sh", "ls", "echo", "cat", "ps"}
+
+	for _, cmd := range hostCommands {
+		hostCmdPath, err := exec.LookPath(cmd)
+		if err != nil {
+			fmt.Printf("Warning: Command %s not found on the host system. Skipping.\n", cmd)
+			continue
+		}
+
+		// Copy the command binary to the container's rootfs
+		containerCmdPath := filepath.Join(rootfs, "bin", filepath.Base(hostCmdPath))
+		if err := copyFile(hostCmdPath, containerCmdPath); err != nil {
+			fmt.Printf("Error: Failed to copy %s to container rootfs: %v\n", cmd, err)
+			return err
+		}
+	}
+
+	return nil
 }
