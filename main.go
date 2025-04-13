@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -211,6 +212,8 @@ func run() {
     
     // Write the PID of the current process to a file
     pidFile := filepath.Join("/tmp/basic-docker/containers", containerID, "pid")
+    fmt.Printf("Debug: Writing PID file for container %s at %s\n", containerID, pidFile)
+    fmt.Printf("Debug: Current process PID is %d\n", os.Getpid())
     if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
         fmt.Printf("Error: Failed to write PID file for container %s: %v\n", containerID, err)
         os.Exit(1)
@@ -569,6 +572,13 @@ func getContainerStatus(containerID string) string {
 		return "Stopped"
 	}
 
+	// Check if the process is still running
+	if err := syscall.Kill(atoi(pid), 0); err != nil {
+		if err == syscall.ESRCH {
+			return "Stopped"
+		}
+	}
+
 	return "Running"
 }
 
@@ -776,4 +786,13 @@ func fallbackToHostBinaries(rootfs string) error {
 	}
 
 	return nil
+}
+
+func atoi(s string) int {
+	result, err := strconv.Atoi(s)
+	if err != nil {
+		fmt.Printf("Error converting string to int: %v\n", err)
+		os.Exit(1)
+	}
+	return result
 }
