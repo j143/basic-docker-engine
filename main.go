@@ -203,16 +203,7 @@ func run() {
         // Full isolation approach for pure Linux environments
         runWithNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
     } else {
-        fmt.Println("Warning: Namespace isolation is not permitted. Executing without isolation.")
-        // Execute the command directly without isolation
-        cmd := exec.Command(os.Args[2], os.Args[3:]...)
-        cmd.Stdin = os.Stdin
-        cmd.Stdout = os.Stdout
-        cmd.Stderr = os.Stderr
-        if err := cmd.Run(); err != nil {
-            fmt.Printf("Error: %v\n", err)
-            os.Exit(1)
-        }
+        runWithoutNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
     }
     
     fmt.Printf("Container %s exited\n", containerID)
@@ -360,6 +351,19 @@ func runWithNamespaces(containerID, rootfs, command string, args []string) {
 		fmt.Println("Error:", err)
 		os.Exit(1)
 	}
+}
+
+// Reintroduce runWithoutNamespaces for simplicity and modularity
+func runWithoutNamespaces(containerID, rootfs, command string, args []string) {
+    fmt.Println("Warning: Namespace isolation is not permitted. Executing without isolation.")
+    cmd := exec.Command(command, args...)
+    cmd.Stdin = os.Stdin
+    cmd.Stdout = os.Stdout
+    cmd.Stderr = os.Stderr
+    if err := cmd.Run(); err != nil {
+        fmt.Printf("Error: %v\n", err)
+        os.Exit(1)
+    }
 }
 
 func createMinimalRootfs(rootfs string) error {

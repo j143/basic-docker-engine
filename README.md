@@ -69,12 +69,9 @@ flowchart TB
         end
         
         subgraph "Isolation Components"
-            FULL["Full Isolation
-            (Linux Namespaces)"]
-            LIMITED["Limited Isolation
-            (chroot/unshare)"]
-            FALLBACK["Minimal Isolation
-            (directory separation)"]
+            FULL["Full Isolation\n(Linux Namespaces)"]
+            LIMITED["Limited Isolation\n(chroot/unshare)"]
+            FALLBACK["Minimal Isolation\n(runWithoutNamespaces)"]
         end
     end
     
