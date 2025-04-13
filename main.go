@@ -612,27 +612,14 @@ func listContainers() {
 }
 
 func listImages() {
-	// Look at the filesystem for image directories
-	imageDir := "/tmp/basic-docker/images"
-	
-	fmt.Println("IMAGE NAME\tSIZE")
-	
-	// Check if directory exists
-	if _, err := os.Stat(imageDir); os.IsNotExist(err) {
-		return
-	}
-	
-	entries, err := os.ReadDir(imageDir)
-	if err != nil {
-		fmt.Printf("Error reading images: %v\n", err)
-		return
-	}
-	
-	for _, entry := range entries {
-		if entry.IsDir() {
-			fmt.Printf("%s\tN/A\n", entry.Name())
-		}
-	}
+	fmt.Println("[DEBUG] listImages: Starting to list images")
+	ListImages()
+	fmt.Println("[DEBUG] listImages: Finished listing images")
+}
+
+func testListImages() {
+	fmt.Println("[DEBUG] Testing ListImages function")
+	ListImages()
 }
 
 func copyFile(src, dst string) error {

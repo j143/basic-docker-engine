@@ -165,6 +165,41 @@ The logic implemented for building images and running containers in the basic Do
 It starts by checking if the base layer exists, initializes it if necessary, and then creates an app layer for container-specific files.
 Finally, the layers are mounted to create the root filesystem, and the container is executed.
 
+## Code Structure
+
+### Diagram of Classes and Functions
+
+```mermaid
+graph TD
+    subgraph Image Management
+        Image["Image"]
+        Registry["Registry Interface"]
+        Manifest["Manifest"]
+        Pull["Pull Function"]
+        ListImages["ListImages Function"]
+        ExtractLayer["extractLayer Function"]
+    end
+
+    subgraph Main Application
+        Main["main Function"]
+        ListContainers["listContainers Function"]
+        Run["run Function"]
+        PrintSystemInfo["printSystemInfo Function"]
+        ExecCommand["execCommand Function"]
+    end
+
+    Main -->|Delegates| Pull
+    Main -->|Delegates| ListImages
+    Pull -->|Uses| Registry
+    Pull -->|Uses| Manifest
+    Pull -->|Calls| ExtractLayer
+    ListImages -->|Reads| Image
+    Run -->|Creates| Image
+    ExecCommand -->|Interacts| Containers
+```
+
+This diagram provides an overview of the key classes and functions in the project, showing their relationships and responsibilities.
+
 ## Basic docker prompts
 
 ### `basic-docker info`

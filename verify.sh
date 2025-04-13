@@ -7,7 +7,7 @@ mkdir -p /tmp/basic-docker/images
 
 # Build the basic-docker binary with error handling
 echo "==== Building Project ===="
-if ! go build -o basic-docker main.go; then
+if ! go build -o basic-docker main.go image.go; then
     echo "Error: Build failed. Please check the errors above." >&2
     exit 1
 fi
@@ -24,6 +24,10 @@ sudo ./basic-docker run /bin/echo "Hello from container"
 # List containers
 echo -e "\n\n==== Listing Containers ===="
 sudo ./basic-docker ps
+
+# List images
+echo -e "\n\n==== Listing Images ===="
+sudo ./basic-docker images
 
 # Run a more complex command if possible
 if command -v busybox > /dev/null; then
