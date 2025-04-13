@@ -198,13 +198,21 @@ func run() {
     layers := []string{baseLayerID} // Add appLayerID if you created one
     must(mountLayeredFilesystem(layers, rootfs))
     
-    // Now run the container with the mounted filesystem
+    // Update the fallback logic to avoid using unshare entirely in limited isolation
     if hasNamespacePrivileges && !inContainer {
         // Full isolation approach for pure Linux environments
         runWithNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
     } else {
-        // Limited isolation for container environments
-        runWithoutNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
+        fmt.Println("Warning: Namespace isolation is not permitted. Executing without isolation.")
+        // Execute the command directly without isolation
+        cmd := exec.Command(os.Args[2], os.Args[3:]...)
+        cmd.Stdin = os.Stdin
+        cmd.Stdout = os.Stdout
+        cmd.Stderr = os.Stderr
+        if err := cmd.Run(); err != nil {
+            fmt.Printf("Error: %v\n", err)
+            os.Exit(1)
+        }
     }
     
     fmt.Printf("Container %s exited\n", containerID)
@@ -351,39 +359,6 @@ func runWithNamespaces(containerID, rootfs, command string, args []string) {
 	if err := cmd.Run(); err != nil {
 		fmt.Println("Error:", err)
 		os.Exit(1)
-	}
-}
-
-// runWithoutNamespaces uses basic chroot-like isolation for container environments
-func runWithoutNamespaces(containerID, rootfs, command string, args []string) {
-	// Create a script to run the command with basic isolation
-	script := fmt.Sprintf(`#!/bin/sh
-cd %s
-export PATH=/bin:/usr/bin:/sbin:/usr/sbin
-# Try different isolation methods
-if command -v chroot > /dev/null && [ $(id -u) -eq 0 ]; then
-    # If we have chroot and root
-    chroot . %s %s
-elif command -v unshare > /dev/null; then
-    # Try unshare if available
-    unshare --mount --uts --ipc --pid --fork -- %s %s
-else
-    # Fallback without isolation
-    %s %s
-fi
-`, rootfs, command, combineArgs(args), command, combineArgs(args), command, combineArgs(args))
-	
-	scriptPath := filepath.Join(rootfs, "run.sh")
-	os.WriteFile(scriptPath, []byte(script), 0755)
-	
-	// Execute the script
-	cmd := exec.Command("/bin/sh", scriptPath)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	
-	if err := cmd.Run(); err != nil {
-		fmt.Println("Error:", err)
 	}
 }
 
