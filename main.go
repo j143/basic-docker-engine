@@ -1,9 +1,12 @@
 package main
 
 import (
+	"archive/tar"
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,37 +40,45 @@ type ImageLayer struct {
 
 // Load configuration from a .basic-docker-config file
 func loadConfig() map[string]string {
-    config := map[string]string{
-        "registryURL": "https://registry.example.com/images/", // Default registry URL
+    config := map[string]string{} // Initialize an empty configuration map
+
+    configFile := ".basic-docker-config" // Use the config file in the current directory
+    fmt.Printf("Debug: Looking for config file at %s\n", configFile)
+
+    if _, err := os.Stat(configFile); err != nil {
+        if os.IsNotExist(err) {
+            fmt.Printf("Error: Config file not found at %s\n", configFile)
+        } else {
+            fmt.Printf("Error: Failed to access config file: %v\n", err)
+        }
+        return config
     }
 
-    configFile := filepath.Join(os.Getenv("HOME"), ".basic-docker-config")
-    if _, err := os.Stat(configFile); err == nil {
-        file, err := os.Open(configFile)
-        if err != nil {
-            fmt.Printf("Warning: Failed to open config file: %v\n", err)
-            return config
-        }
-        defer file.Close()
+    file, err := os.Open(configFile)
+    if err != nil {
+        fmt.Printf("Error: Failed to open config file: %v\n", err)
+        return config
+    }
+    defer file.Close()
 
-        scanner := bufio.NewScanner(file)
-        for scanner.Scan() {
-            line := strings.TrimSpace(scanner.Text())
-            if line == "" || strings.HasPrefix(line, "#") {
-                continue // Skip empty lines and comments
-            }
-            parts := strings.SplitN(line, "=", 2)
-            if len(parts) == 2 {
-                key := strings.TrimSpace(parts[0])
-                value := strings.TrimSpace(parts[1])
-                config[key] = value
-            }
+    scanner := bufio.NewScanner(file)
+    for scanner.Scan() {
+        line := strings.TrimSpace(scanner.Text())
+        if line == "" || strings.HasPrefix(line, "#") {
+            continue // Skip empty lines and comments
         }
-        if err := scanner.Err(); err != nil {
-            fmt.Printf("Warning: Failed to read config file: %v\n", err)
+        parts := strings.SplitN(line, "=", 2)
+        if len(parts) == 2 {
+            key := strings.TrimSpace(parts[0])
+            value := strings.TrimSpace(parts[1])
+            config[key] = value
         }
     }
+    if err := scanner.Err(); err != nil {
+        fmt.Printf("Error: Failed to read config file: %v\n", err)
+    }
 
+    fmt.Printf("Debug: Loaded config: %v\n", config)
     return config
 }
 
@@ -155,6 +166,16 @@ func main() {
 		printSystemInfo()
 	case "exec":
 		execCommand()
+	case "delete":
+		if len(os.Args) < 3 {
+			fmt.Println("Error: Image name required for delete")
+			os.Exit(1)
+		}
+		imageName := os.Args[2]
+		if err := deleteImage(imageName); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])
 		printUsage()
@@ -169,6 +190,7 @@ func printUsage() {
 	fmt.Println("  basic-docker images                   - List available images")
 	fmt.Println("  basic-docker info                     - Show system information")
 	fmt.Println("  basic-docker exec <container-id> <command> [args...] - Execute a command in a running container")
+	fmt.Println("  basic-docker delete <image-name>      - Delete a Docker image")
 }
 
 func printSystemInfo() {
@@ -274,23 +296,22 @@ func run() {
         os.Exit(1)
     }
     
-    // Fix deadlock by adding a timeout mechanism
+    // Check if a command is provided
     if len(os.Args) < 4 {
-        fmt.Println("No command provided. Keeping the container process alive with a timeout.")
-        timeout := time.After(10 * time.Minute) // Set a timeout of 10 minutes
-        select {
-        case <-timeout:
-            fmt.Println("Timeout reached. Exiting container process.")
-            os.Exit(0)
-        }
+        fmt.Println("Error: No command provided to run inside the container.")
+        os.Exit(1)
     }
+
+    // Extract the command and its arguments
+    command := os.Args[3]
+    args := os.Args[4:]
 
     // Update the fallback logic to avoid using unshare entirely in limited isolation
     if hasNamespacePrivileges && !inContainer {
         // Full isolation approach for pure Linux environments
-        runWithNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
+        runWithNamespaces(containerID, rootfs, command, args)
     } else {
-        runWithoutNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
+        runWithoutNamespaces(containerID, rootfs, command, args)
     }
     
     fmt.Printf("Container %s exited\n", containerID)
@@ -852,27 +873,124 @@ func atoi(s string) int {
 
 // Update fetchImage to fetch the image from a registry
 func fetchImage(imageName string) error {
-    fmt.Printf("Fetching image '%s' from registry...\n", imageName)
+    // Load configuration from a .basic-docker-config file
+    config := loadConfig()
 
-    // Simulate fetching the image from a registry
-    registryURL := "https://registry.example.com/images/" + imageName
-    fmt.Printf("Connecting to registry at %s\n", registryURL)
+    // Fetch the registry URL from the configuration
+    registryURL, exists := config["registryURL"]
+    if !exists {
+        fmt.Println("Error: registryURL not found in configuration.")
+        os.Exit(1)
+    }
 
-    // Simulate download process
-    time.Sleep(2 * time.Second)
+    // Fetch the image from the configured Docker registry
+    fmt.Printf("Fetching image '%s' from Docker registry...\n", imageName)
+    fmt.Printf("Connecting to registry at %s%s\n", registryURL, imageName)
+
+    // Perform an HTTP GET request to fetch the image
+    resp, err := http.Get(fmt.Sprintf("%s%s", registryURL, imageName))
+    if err != nil {
+        return fmt.Errorf("Failed to fetch image '%s': %v", imageName, err)
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode != http.StatusOK {
+        return fmt.Errorf("Failed to fetch image '%s': received status code %d", imageName, resp.StatusCode)
+    }
 
     // Create a directory for the image
     imagePath := filepath.Join(imagesDir, imageName)
     if err := os.MkdirAll(imagePath, 0755); err != nil {
-        return fmt.Errorf("failed to create image directory: %v", err)
+        return fmt.Errorf("Failed to create image directory: %v", err)
     }
 
-    // Simulate saving the image to the directory
+    // Save the image data to a file
     imageFile := filepath.Join(imagePath, "image.tar")
-    if err := os.WriteFile(imageFile, []byte("dummy image content"), 0644); err != nil {
-        return fmt.Errorf("failed to save image: %v", err)
+    outFile, err := os.Create(imageFile)
+    if err != nil {
+        return fmt.Errorf("Failed to create image file: %v", err)
+    }
+    defer outFile.Close()
+
+    if _, err := io.Copy(outFile, resp.Body); err != nil {
+        return fmt.Errorf("Failed to save image data: %v", err)
     }
 
     fmt.Printf("Image '%s' fetched and saved successfully.\n", imageName)
+
+    // Load the image into the container runtime
+    fmt.Printf("Loading image '%s' into the container runtime...\n", imageName)
+    if err := extractTar(imageFile, imagePath); err != nil {
+        return fmt.Errorf("Failed to load image '%s': %v", imageName, err)
+    }
+    fmt.Printf("Image '%s' loaded successfully.\n", imageName)
+
+    return nil
+}
+
+func deleteImage(imageName string) error {
+    // Construct the image path
+    imagePath := filepath.Join(imagesDir, imageName)
+
+    // Check if the image exists
+    if _, err := os.Stat(imagePath); os.IsNotExist(err) {
+        return fmt.Errorf("Image '%s' does not exist", imageName)
+    }
+
+    // Remove the image directory
+    if err := os.RemoveAll(imagePath); err != nil {
+        return fmt.Errorf("Failed to delete image '%s': %v", imageName)
+    }
+
+    fmt.Printf("Image '%s' deleted successfully.\n", imageName)
+    return nil
+}
+
+func extractTar(tarFile, destDir string) error {
+    // Open the tar file
+    file, err := os.Open(tarFile)
+    if err != nil {
+        return fmt.Errorf("failed to open tar file: %v", err)
+    }
+    defer file.Close()
+
+    // Create a tar reader
+    tarReader := tar.NewReader(file)
+
+    // Extract files from the tar archive
+    for {
+        header, err := tarReader.Next()
+        if err == io.EOF {
+            break // End of archive
+        }
+        if err != nil {
+            return fmt.Errorf("failed to read tar header: %v", err)
+        }
+
+        // Determine the target path
+        targetPath := filepath.Join(destDir, header.Name)
+
+        switch header.Typeflag {
+        case tar.TypeDir:
+            // Create directories
+            if err := os.MkdirAll(targetPath, os.FileMode(header.Mode)); err != nil {
+                return fmt.Errorf("failed to create directory: %v", err)
+            }
+        case tar.TypeReg:
+            // Create files
+            outFile, err := os.Create(targetPath)
+            if err != nil {
+                return fmt.Errorf("failed to create file: %v", err)
+            }
+            defer outFile.Close()
+
+            if _, err := io.Copy(outFile, tarReader); err != nil {
+                return fmt.Errorf("failed to write file: %v", err)
+            }
+        default:
+            return fmt.Errorf("unsupported tar entry type: %v", header.Typeflag)
+        }
+    }
+
     return nil
 }
