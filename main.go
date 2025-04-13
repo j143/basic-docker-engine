@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -32,6 +33,42 @@ type ImageLayer struct {
 	Size          int64
 	BaseLayerPath string
 	AppLayerPath  string
+}
+
+// Load configuration from a .basic-docker-config file
+func loadConfig() map[string]string {
+    config := map[string]string{
+        "registryURL": "https://registry.example.com/images/", // Default registry URL
+    }
+
+    configFile := filepath.Join(os.Getenv("HOME"), ".basic-docker-config")
+    if _, err := os.Stat(configFile); err == nil {
+        file, err := os.Open(configFile)
+        if err != nil {
+            fmt.Printf("Warning: Failed to open config file: %v\n", err)
+            return config
+        }
+        defer file.Close()
+
+        scanner := bufio.NewScanner(file)
+        for scanner.Scan() {
+            line := strings.TrimSpace(scanner.Text())
+            if line == "" || strings.HasPrefix(line, "#") {
+                continue // Skip empty lines and comments
+            }
+            parts := strings.SplitN(line, "=", 2)
+            if len(parts) == 2 {
+                key := strings.TrimSpace(parts[0])
+                value := strings.TrimSpace(parts[1])
+                config[key] = value
+            }
+        }
+        if err := scanner.Err(); err != nil {
+            fmt.Printf("Warning: Failed to read config file: %v\n", err)
+        }
+    }
+
+    return config
 }
 
 // To initialize the directories
@@ -813,11 +850,29 @@ func atoi(s string) int {
 	return result
 }
 
+// Update fetchImage to fetch the image from a registry
 func fetchImage(imageName string) error {
-	// Placeholder function for fetching an image
-	fmt.Printf("Fetching image '%s'...\n", imageName)
-	// Simulate fetching the image
-	time.Sleep(2 * time.Second)
-	fmt.Printf("Image '%s' fetched successfully.\n", imageName)
-	return nil
+    fmt.Printf("Fetching image '%s' from registry...\n", imageName)
+
+    // Simulate fetching the image from a registry
+    registryURL := "https://registry.example.com/images/" + imageName
+    fmt.Printf("Connecting to registry at %s\n", registryURL)
+
+    // Simulate download process
+    time.Sleep(2 * time.Second)
+
+    // Create a directory for the image
+    imagePath := filepath.Join(imagesDir, imageName)
+    if err := os.MkdirAll(imagePath, 0755); err != nil {
+        return fmt.Errorf("failed to create image directory: %v", err)
+    }
+
+    // Simulate saving the image to the directory
+    imageFile := filepath.Join(imagePath, "image.tar")
+    if err := os.WriteFile(imageFile, []byte("dummy image content"), 0644); err != nil {
+        return fmt.Errorf("failed to save image: %v", err)
+    }
+
+    fmt.Printf("Image '%s' fetched and saved successfully.\n", imageName)
+    return nil
 }
