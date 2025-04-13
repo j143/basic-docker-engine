@@ -32,8 +32,18 @@ jobs:
     - name: Install dependencies
       run: go mod tidy
 
-    - name: Build project
-      run: go build -o basic-docker main.go
+    - name: Create required directories
+      run: |
+        mkdir -p /tmp/basic-docker/containers
+        mkdir -p /tmp/basic-docker/images
+
+    - name: Build project with error handling
+      run: |
+        echo "==== Building Project ===="
+        if ! go build -o basic-docker main.go; then
+            echo "Error: Build failed. Please check the errors above." >&2
+            exit 1
+        fi
 
     - name: Run verification script
       run: |
