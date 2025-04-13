@@ -153,6 +153,15 @@ graph TD
     I --> J[Mount Layers to Create Rootfs]
     J --> K[Run Container with Rootfs]
     K --> L[End]
+    
+    %% Styling
+    classDef startEnd fill:#d0e0ff,stroke:#3080ff,stroke-width:2px
+    classDef process fill:#ffe0d0,stroke:#ff8030,stroke-width:2px
+    classDef decision fill:#d0ffe0,stroke:#30ff80,stroke-width:2px
+    
+    class A,L startEnd
+    class B decision
+    class C,D,E,F,G,H,I,J,K process
 ```
 
 The logic implemented for building images and running containers in the basic Docker engine.
