@@ -196,6 +196,16 @@ Hello from container
 Container container-1743307567 exited
 ```
 
+## `basic-docker run /bin/busybox`
+
+```bash
+@j143 ➜ /workspaces/basic-docker-engine (main) $ sudo ./basic-docker run /bin/busybox echo "Hello from BusyBox"
+Environment detected: inContainer=true, hasNamespacePrivileges=true, hasCgroupAccess=false
+Starting container container-1744512443
+Hello from BusyBox
+Container container-1744512443 exited
+```
+
 
 ## Verify the prompt functionality
 
