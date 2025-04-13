@@ -209,7 +209,7 @@ func run() {
     // 3. Mount the layers to create the container rootfs
     layers := []string{baseLayerID} // Add appLayerID if you created one
     must(mountLayeredFilesystem(layers, rootfs))
-    
+
     // Write the PID of the current process to a file
     pidFile := filepath.Join("/tmp/basic-docker/containers", containerID, "pid")
     fmt.Printf("Debug: Writing PID file for container %s at %s\n", containerID, pidFile)
@@ -219,6 +219,12 @@ func run() {
         os.Exit(1)
     }
     
+    // Keep the container process alive if no command is provided
+    if len(os.Args) < 4 {
+        fmt.Println("No command provided. Keeping the container process alive.")
+        select {} // Block forever
+    }
+
     // Update the fallback logic to avoid using unshare entirely in limited isolation
     if hasNamespacePrivileges && !inContainer {
         // Full isolation approach for pure Linux environments
