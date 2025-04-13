@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -202,9 +203,13 @@ func initializeBaseLayer(baseLayerPath string) error {
         }
     }
     
-    // Try copying busybox to the base layer
-    busyboxPath, err := exec.LookPath("busybox")
-    if err == nil {
+    // Retain baseLayerPath for potential future use
+    fmt.Printf("Base layer path: %s\n", baseLayerPath)
+
+    // Handle busybox existence more gracefully
+    if busyboxPath, err := exec.LookPath("busybox"); err == nil {
+        fmt.Printf("Busybox found at: %s\n", busyboxPath)
+        // Try copying busybox to the base layer
         if err := copyFile(busyboxPath, filepath.Join(baseLayerPath, "bin/busybox")); err != nil {
             return fmt.Errorf("failed to copy busybox: %v", err)
         }
@@ -217,6 +222,7 @@ func initializeBaseLayer(baseLayerPath string) error {
             }
         }
     } else {
+        fmt.Println("Busybox not found. Falling back to copying individual binaries.")
         // Copy basic binaries from host if busybox is not available
         for _, cmd := range []string{"sh", "ls", "echo", "cat"} {
             cmdPath, err := exec.LookPath(cmd)
@@ -406,8 +412,20 @@ func copyDir(src, dst string) error {
 
 // Implement the saveLayerMetadata function
 func saveLayerMetadata(layer ImageLayer) error {
-    // Placeholder implementation
-    fmt.Printf("Saving metadata for layer: %s\n", layer.ID)
+    // Serialize the layer metadata to JSON
+    metadataFile := filepath.Join(layersDir, layer.ID+".json")
+    file, err := os.Create(metadataFile)
+    if err != nil {
+        return fmt.Errorf("failed to create metadata file: %v", err)
+    }
+    defer file.Close()
+
+    encoder := json.NewEncoder(file)
+    if err := encoder.Encode(layer); err != nil {
+        return fmt.Errorf("failed to write metadata to file: %v", err)
+    }
+
+    fmt.Printf("Metadata for layer %s saved to %s\n", layer.ID, metadataFile)
     return nil
 }
 
@@ -567,6 +585,9 @@ func testMultiLayerMount() {
         return
     }
     
+    // Retain appLayerPath for potential future use
+    fmt.Printf("App layer path: %s\n", appLayerPath)
+
     // Add a file to the app layer
     if err := os.WriteFile(filepath.Join(appLayerPath, "app.txt"), []byte("App layer file"), 0644); err != nil {
         fmt.Printf("Error creating app layer file: %v\n", err)
