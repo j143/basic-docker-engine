@@ -50,7 +50,7 @@ jobs:
     - name: Run Go tests
       run: |
         echo "==== Running Go Tests ===="
-        go test -v ./...
+        sudo go test -v ./...
 
     - name: Run verification script
       run: |
