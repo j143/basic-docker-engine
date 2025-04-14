@@ -142,6 +142,36 @@ func TestCapsuleManager(t *testing.T) {
 	}
 }
 
+// TestPing verifies that containers in the same network can communicate
+func TestPing(t *testing.T) {
+	// Cleanup: Ensure no existing networks or containers interfere with the test
+	networks = []Network{}
+	saveNetworks()
+
+	// Setup: Create a network and attach two containers
+	networkName := "test-network"
+	CreateNetwork(networkName)
+	networkID := networks[0].ID
+
+	container1 := "container-1"
+	container2 := "container-2"
+
+	err := AttachContainerToNetwork(networkID, container1)
+	if err != nil {
+		t.Fatalf("Failed to attach container 1: %v", err)
+	}
+
+	err = AttachContainerToNetwork(networkID, container2)
+	if err != nil {
+		t.Fatalf("Failed to attach container 2: %v", err)
+	}
+
+	err = Ping(networkID, container1, container2)
+	if err != nil {
+		t.Errorf("Ping failed: %v", err)
+	}
+}
+
 // BenchmarkCapsuleAccess benchmarks the access time for Resource Capsules.
 func BenchmarkCapsuleAccess(b *testing.B) {
 	cm := NewCapsuleManager()

@@ -166,6 +166,115 @@ func loadNetworks() {
 - `network-attach <network-id> <container-id>`: Attach a container to a network.
 - `network-detach <network-id> <container-id>`: Detach a container from a network.
 
+## New Functionality: Ping Between Containers
+
+### Context
+To verify connectivity between containers in the same network, a `Ping` function was introduced. This function simulates a ping operation by checking if both containers are attached to the same network and outputs a success message if they are.
+
+### Implementation
+The `Ping` function was added to the networking stack with the following signature:
+
+```go
+func Ping(networkID, sourceContainerID, targetContainerID string) error {
+	for _, network := range networks {
+		if network.ID == networkID {
+			sourceIP, sourceExists := network.Containers[sourceContainerID]
+			targetIP, targetExists := network.Containers[targetContainerID]
+
+			if !sourceExists || !targetExists {
+				return errors.New("one or both containers are not in the network")
+			}
+
+			fmt.Printf("Pinging from %s to %s: Success\n", sourceIP, targetIP)
+			return nil
+		}
+	}
+	return errors.New("network not found")
+}
+```
+
+### Test Scenario
+A test case, `TestPing`, was added to validate this functionality. The test performs the following steps:
+1. Creates a network.
+2. Attaches two containers to the network.
+3. Verifies that the `Ping` function confirms connectivity between the two containers.
+
+#### Test Code
+```go
+func TestPing(t *testing.T) {
+	// Setup: Create a network and attach two containers
+	networkName := "test-network"
+	CreateNetwork(networkName)
+	networkID := networks[0].ID
+
+	container1 := "container-1"
+	container2 := "container-2"
+
+	err := AttachContainerToNetwork(networkID, container1)
+	if err != nil {
+		t.Fatalf("Failed to attach container 1: %v", err)
+	}
+
+	err = AttachContainerToNetwork(networkID, container2)
+	if err != nil {
+		t.Fatalf("Failed to attach container 2: %v", err)
+	}
+
+	err = Ping(networkID, container1, container2)
+	if err != nil {
+		t.Errorf("Ping failed: %v", err)
+	}
+}
+```
+
+### Test Output
+
+The `TestPing` test case was executed successfully, confirming the functionality of the `Ping` feature. Below is the textual output from the test:
+
+```
+Network capsule test-network created with ID net-1
+Container container-1 attached to network net-1 with IP 192.168.1.2
+Container container-2 attached to network net-1 with IP 192.168.1.3
+Pinging from 192.168.1.2 to 192.168.1.3: Success
+```
+
+This output demonstrates that:
+1. A network was created successfully.
+2. Containers were attached to the network with unique IP addresses.
+3. The `Ping` function verified connectivity between the containers.
+
+## Test Overview
+
+### Purpose
+To ensure that containers within the same network can communicate effectively.
+
+### Approach
+A basic test was implemented to:
+1. Create a network.
+2. Attach two containers to the network.
+3. Verify connectivity between the containers using a simulated `Ping` function.
+
+### Diagram
+```mermaid
+graph TD
+    A[Create Network] --> B[Attach Container 1]
+    A --> C[Attach Container 2]
+    B --> D[Ping from Container 1 to Container 2]
+    C --> D
+    D --> E[Verify Connectivity]
+```
+
+### Consequences
+1. **Positive**:
+   - Provides a simple way to verify container connectivity within a network.
+   - Enhances the usability of the networking stack.
+
+2. **Negative**:
+   - Limited to basic connectivity checks; does not simulate real network traffic.
+
+### Status
+Implemented and tested.
+
 ## Design Diagram
 ```mermaid
 graph TD

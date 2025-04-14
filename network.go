@@ -10,10 +10,11 @@ import (
 
 const networksFile = "networks.json"
 
+// Updated Network struct to include IP addresses for containers
 type Network struct {
 	Name       string
 	ID         string
-	Containers []string // List of container IDs attached to this network
+	Containers map[string]string // Map of container IDs to their IP addresses
 }
 
 var networks = []Network{}
@@ -57,7 +58,7 @@ func saveNetworks() {
 // CreateNetwork creates a new network capsule
 func CreateNetwork(name string) {
 	id := fmt.Sprintf("net-%d", len(networks)+1)
-	network := Network{Name: name, ID: id, Containers: []string{}}
+	network := Network{Name: name, ID: id, Containers: make(map[string]string)}
 	networks = append(networks, network)
 
 	// Register the network as a resource capsule
@@ -87,19 +88,20 @@ func DeleteNetwork(id string) {
 	fmt.Printf("Network with ID %s not found\n", id)
 }
 
-// AttachContainerToNetwork attaches a container to a network capsule
+// Updated AttachContainerToNetwork to assign IP addresses
 func AttachContainerToNetwork(networkID, containerID string) error {
 	for i, network := range networks {
 		if network.ID == networkID {
 			// Check if the container is already attached
-			for _, c := range network.Containers {
-				if c == containerID {
-					return errors.New("container is already attached to the network")
-				}
+			if _, exists := network.Containers[containerID]; exists {
+				return errors.New("container is already attached to the network")
 			}
-			// Attach the container
-			networks[i].Containers = append(network.Containers, containerID)
-			fmt.Printf("Container %s attached to network %s\n", containerID, networkID)
+
+			// Assign an IP address to the container
+			ipAddress := fmt.Sprintf("192.168.%d.%d", i+1, len(network.Containers)+2)
+			networks[i].Containers[containerID] = ipAddress
+			saveNetworks()
+			fmt.Printf("Container %s attached to network %s with IP %s\n", containerID, networkID, ipAddress)
 			return nil
 		}
 	}
@@ -111,14 +113,31 @@ func DetachContainerFromNetwork(networkID, containerID string) error {
 	for i, network := range networks {
 		if network.ID == networkID {
 			// Find and remove the container
-			for j, c := range network.Containers {
-				if c == containerID {
-					networks[i].Containers = append(network.Containers[:j], network.Containers[j+1:]...)
-					fmt.Printf("Container %s detached from network %s\n", containerID, networkID)
-					return nil
-				}
+			if _, exists := network.Containers[containerID]; exists {
+				delete(networks[i].Containers, containerID)
+				saveNetworks()
+				fmt.Printf("Container %s detached from network %s\n", containerID, networkID)
+				return nil
 			}
 			return errors.New("container not found in the network")
+		}
+	}
+	return errors.New("network not found")
+}
+
+// New Ping function to test connectivity between containers
+func Ping(networkID, sourceContainerID, targetContainerID string) error {
+	for _, network := range networks {
+		if network.ID == networkID {
+			sourceIP, sourceExists := network.Containers[sourceContainerID]
+			targetIP, targetExists := network.Containers[targetContainerID]
+
+			if !sourceExists || !targetExists {
+				return errors.New("one or both containers are not in the network")
+			}
+
+			fmt.Printf("Pinging from %s to %s: Success\n", sourceIP, targetIP)
+			return nil
 		}
 	}
 	return errors.New("network not found")
