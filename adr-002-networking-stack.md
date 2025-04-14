@@ -264,6 +264,23 @@ graph TD
     D --> E[Verify Connectivity]
 ```
 
+## Test Diagram for Containers 1, 2, and 3
+
+To illustrate the test scenario involving containers 1, 2, and 3 across two networks, the following diagram has been added:
+
+```mermaid
+graph TD
+    A[Create Network 1] --> B[Attach Container 1 to Network 1]
+    A --> C[Attach Container 2 to Network 1]
+    D[Create Network 2] --> E[Attach Container 3 to Network 2]
+    B --> F[Ping from Container 1 to Container 2 (Success)]
+    C --> F
+    B --> G[Ping from Container 1 to Container 3 (Fail)]
+    E --> G
+```
+
+This diagram visually represents the relationships and ping results between the containers in the test scenario.
+
 ### Consequences
 1. **Positive**:
    - Provides a simple way to verify container connectivity within a network.
@@ -304,5 +321,4 @@ In Review
 ## Date
 April 14, 2025
 
-## Author
-Basic Docker Engine Team
+

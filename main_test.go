@@ -170,6 +170,25 @@ func TestPing(t *testing.T) {
 	if err != nil {
 		t.Errorf("Ping failed: %v", err)
 	}
+
+	// Create a second network and a third container
+	networkName2 := "test-network-2"
+	CreateNetwork(networkName2)
+	networkID2 := networks[1].ID
+
+	container3 := "container-3"
+	err = AttachContainerToNetwork(networkID2, container3)
+	if err != nil {
+		t.Fatalf("Failed to attach container 3 to network 2: %v", err)
+	}
+
+	// Test ping between container1 and container3 (should fail)
+	err = Ping(networkID, container1, container3)
+	if err == nil {
+		t.Errorf("Ping succeeded but was expected to fail between container1 and container3")
+	} else {
+		t.Logf("Ping failed as expected between container1 and container3: %v", err)
+	}
 }
 
 // BenchmarkCapsuleAccess benchmarks the access time for Resource Capsules.
