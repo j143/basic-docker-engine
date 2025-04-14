@@ -6,11 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+	"runtime"
 )
 
 // Environment detection
@@ -73,7 +73,7 @@ func (cm *CapsuleManager) AttachCapsule(containerID, name, version string) error
 	key := name + ":" + version
 
 	capsule, exists := cm.Capsules[key]
-  
+
 	if !exists {
 		return fmt.Errorf("capsule %s:%s not found", name, version)
 	}
@@ -133,8 +133,8 @@ func init() {
 	} else {
 		// Check if /proc/self/cgroup contains docker or containerd
 		data, err := os.ReadFile("/proc/self/cgroup")
-		if err == nil && (strings.Contains(string(data), "docker") || 
-						  strings.Contains(string(data), "containerd")) {
+		if err == nil && (strings.Contains(string(data), "docker") ||
+			strings.Contains(string(data), "containerd")) {
 			inContainer = true
 		}
 	}
@@ -155,7 +155,7 @@ func init() {
 		os.Remove(testPath)
 	}
 
-	fmt.Printf("Environment detected: inContainer=%v, hasNamespacePrivileges=%v, hasCgroupAccess=%v\n", 
+	fmt.Printf("Environment detected: inContainer=%v, hasNamespacePrivileges=%v, hasCgroupAccess=%v\n",
 		inContainer, hasNamespacePrivileges, hasCgroupAccess)
 
 	if err := initDirectories(); err != nil {
@@ -184,8 +184,39 @@ func main() {
 		printSystemInfo()
 	case "exec":
 		execCommand()
+	case "network-create":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: basic-docker network-create <network-name>")
+			return
+		}
+		CreateNetwork(os.Args[2])
+	case "network-list":
+		ListNetworks()
+	case "network-delete":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: basic-docker network-delete <network-id>")
+			return
+		}
+		DeleteNetwork(os.Args[2])
+	case "network-attach":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: basic-docker network-attach <network-id> <container-id>")
+			return
+		}
+		err := AttachContainerToNetwork(os.Args[2], os.Args[3])
+		if err != nil {
+			fmt.Printf("Error: %s\n", err)
+		}
+	case "network-detach":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: basic-docker network-detach <network-id> <container-id>")
+			return
+		}
+		err := DetachContainerFromNetwork(os.Args[2], os.Args[3])
+		if err != nil {
+			fmt.Printf("Error: %s\n", err)
+		}
 	default:
-		fmt.Printf("Unknown command: %s\n", os.Args[1])
 		printUsage()
 		os.Exit(1)
 	}
@@ -198,6 +229,11 @@ func printUsage() {
 	fmt.Println("  basic-docker images                   - List available images")
 	fmt.Println("  basic-docker info                     - Show system information")
 	fmt.Println("  basic-docker exec <container-id> <command> [args...] - Execute a command in a running container")
+	fmt.Println("  basic-docker network-create <network-name>  Create a new network")
+	fmt.Println("  basic-docker network-list                   List all networks")
+	fmt.Println("  basic-docker network-delete <network-id>   Delete a network by ID")
+	fmt.Println("  basic-docker network-attach <network-id> <container-id> Attach a container to a network")
+	fmt.Println("  basic-docker network-detach <network-id> <container-id> Detach a container from a network")
 }
 
 func printSystemInfo() {
@@ -216,258 +252,258 @@ func printSystemInfo() {
 }
 
 func run() {
-    // Adjust the path to include the mock image directory during testing
+	// Adjust the path to include the mock image directory during testing
 	if os.Getenv("TEST_ENV") == "true" {
 		os.Setenv("PATH", os.Getenv("PATH")+":"+imagesDir)
 	}
 
-    // Generate a container ID
-    containerID := fmt.Sprintf("container-%d", time.Now().Unix())
-    fmt.Printf("Starting container %s\n", containerID)
+	// Generate a container ID
+	containerID := fmt.Sprintf("container-%d", time.Now().Unix())
+	fmt.Printf("Starting container %s\n", containerID)
 
-    // Check if the image exists before proceeding
-    imageName := os.Args[2]
-    imagePath := filepath.Join(imagesDir, imageName)
-    if _, err := os.Stat(imagePath); os.IsNotExist(err) {
-        fmt.Printf("Image '%s' not found. Fetching the image...\n", imageName)
-        if err := fetchImage(imageName); err != nil {
-            fmt.Printf("Error: Failed to fetch image '%s': %v\n", imageName, err)
-            os.Exit(1)
-        }
-        fmt.Printf("Image '%s' fetched successfully.\n", imageName)
-    }
+	// Check if the image exists before proceeding
+	imageName := os.Args[2]
+	imagePath := filepath.Join(imagesDir, imageName)
+	if _, err := os.Stat(imagePath); os.IsNotExist(err) {
+		fmt.Printf("Image '%s' not found. Fetching the image...\n", imageName)
+		if err := fetchImage(imageName); err != nil {
+			fmt.Printf("Error: Failed to fetch image '%s': %v\n", imageName, err)
+			os.Exit(1)
+		}
+		fmt.Printf("Image '%s' fetched successfully.\n", imageName)
+	}
 
-    // Create rootfs for this container
-    rootfs := filepath.Join(baseDir, "containers", containerID, "rootfs")
-    
-    // Instead of calling createMinimalRootfs directly:
-    // 1. Create a base layer if it doesn't exist
-    baseLayerID := "base-layer"
-    baseLayerPath := filepath.Join(baseDir, "layers", baseLayerID)
-    
-    if _, err := os.Stat(baseLayerPath); os.IsNotExist(err) {
-        // Create the base layer
-        if err := os.MkdirAll(baseLayerPath, 0755); err != nil {
-            fmt.Printf("Error creating base layer directory: %v\n", err)
-            os.Exit(1)
-        }
-        
-        // Initialize the base layer with minimal rootfs content
-        must(initializeBaseLayer(baseLayerPath))
-        
-        // Save layer metadata
-        layer := ImageLayer{
-            ID:            baseLayerID,
-            Created:       time.Now(),
-            BaseLayerPath: baseLayerPath,
-        }
-        
-        if err := saveLayerMetadata(layer); err != nil {
-            fmt.Printf("Warning: Failed to save layer metadata: %v\n", err)
-        }
-    }
+	// Create rootfs for this container
+	rootfs := filepath.Join(baseDir, "containers", containerID, "rootfs")
 
-    // Fix permission issue by ensuring correct ownership and permissions for the base layer
-    if err := os.Chmod(baseLayerPath, 0755); err != nil {
-        fmt.Printf("Error setting permissions for base layer: %v\n", err)
-        os.Exit(1)
-    }
-    
-    // 2. Create an app layer for this specific container (optional)
-    appLayerID := "app-layer-" + containerID
-    appLayerPath := filepath.Join(baseDir, "layers", appLayerID)
-    
-    // Use the appLayerID variable to log its creation
-    fmt.Printf("App layer created with ID: %s\n", appLayerID)
-    
-    // You could add container-specific files to the app layer here
-    // For now, we'll just use the base layer
-    
-    // Save layer metadata including app layer path
-    layer := ImageLayer{
-        ID:            appLayerID,
-        Created:       time.Now(),
-        BaseLayerPath: baseLayerPath,
-        AppLayerPath:  appLayerPath,
-    }
+	// Instead of calling createMinimalRootfs directly:
+	// 1. Create a base layer if it doesn't exist
+	baseLayerID := "base-layer"
+	baseLayerPath := filepath.Join(baseDir, "layers", baseLayerID)
 
-    if err := saveLayerMetadata(layer); err != nil {
-        fmt.Printf("Warning: Failed to save layer metadata: %v\n", err)
-    }
-    
-    // 3. Mount the layers to create the container rootfs
-    layers := []string{baseLayerID} // Add appLayerID if you created one
-    must(mountLayeredFilesystem(layers, rootfs))
+	if _, err := os.Stat(baseLayerPath); os.IsNotExist(err) {
+		// Create the base layer
+		if err := os.MkdirAll(baseLayerPath, 0755); err != nil {
+			fmt.Printf("Error creating base layer directory: %v\n", err)
+			os.Exit(1)
+		}
 
-    // Write the PID of the current process to a file
-    pidFile := filepath.Join(baseDir, "containers", containerID, "pid")
-    fmt.Printf("Debug: Writing PID file for container %s at %s\n", containerID, pidFile)
-    fmt.Printf("Debug: Current process PID is %d\n", os.Getpid())
-    if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
-        fmt.Printf("Error: Failed to write PID file for container %s: %v\n", containerID, err)
-        os.Exit(1)
-    }
-    
-    // Fix deadlock by adding a timeout mechanism
-    if len(os.Args) < 4 {
-        fmt.Println("No command provided. Keeping the container process alive with a timeout.")
-        timeout := time.After(10 * time.Minute) // Set a timeout of 10 minutes
-        select {
-        case <-timeout:
-            fmt.Println("Timeout reached. Exiting container process.")
-            os.Exit(0)
-        }
-    }
+		// Initialize the base layer with minimal rootfs content
+		must(initializeBaseLayer(baseLayerPath))
 
-    // Update the fallback logic to avoid using unshare entirely in limited isolation
-    if hasNamespacePrivileges && !inContainer {
-        // Full isolation approach for pure Linux environments
-        runWithNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
-    } else {
-        runWithoutNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
-    }
-    
-    fmt.Printf("Container %s exited\n", containerID)
+		// Save layer metadata
+		layer := ImageLayer{
+			ID:            baseLayerID,
+			Created:       time.Now(),
+			BaseLayerPath: baseLayerPath,
+		}
+
+		if err := saveLayerMetadata(layer); err != nil {
+			fmt.Printf("Warning: Failed to save layer metadata: %v\n", err)
+		}
+	}
+
+	// Fix permission issue by ensuring correct ownership and permissions for the base layer
+	if err := os.Chmod(baseLayerPath, 0755); err != nil {
+		fmt.Printf("Error setting permissions for base layer: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 2. Create an app layer for this specific container (optional)
+	appLayerID := "app-layer-" + containerID
+	appLayerPath := filepath.Join(baseDir, "layers", appLayerID)
+
+	// Use the appLayerID variable to log its creation
+	fmt.Printf("App layer created with ID: %s\n", appLayerID)
+
+	// You could add container-specific files to the app layer here
+	// For now, we'll just use the base layer
+
+	// Save layer metadata including app layer path
+	layer := ImageLayer{
+		ID:            appLayerID,
+		Created:       time.Now(),
+		BaseLayerPath: baseLayerPath,
+		AppLayerPath:  appLayerPath,
+	}
+
+	if err := saveLayerMetadata(layer); err != nil {
+		fmt.Printf("Warning: Failed to save layer metadata: %v\n", err)
+	}
+
+	// 3. Mount the layers to create the container rootfs
+	layers := []string{baseLayerID} // Add appLayerID if you created one
+	must(mountLayeredFilesystem(layers, rootfs))
+
+	// Write the PID of the current process to a file
+	pidFile := filepath.Join(baseDir, "containers", containerID, "pid")
+	fmt.Printf("Debug: Writing PID file for container %s at %s\n", containerID, pidFile)
+	fmt.Printf("Debug: Current process PID is %d\n", os.Getpid())
+	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
+		fmt.Printf("Error: Failed to write PID file for container %s: %v\n", containerID, err)
+		os.Exit(1)
+	}
+
+	// Fix deadlock by adding a timeout mechanism
+	if len(os.Args) < 4 {
+		fmt.Println("No command provided. Keeping the container process alive with a timeout.")
+		timeout := time.After(10 * time.Minute) // Set a timeout of 10 minutes
+		select {
+		case <-timeout:
+			fmt.Println("Timeout reached. Exiting container process.")
+			os.Exit(0)
+		}
+	}
+
+	// Update the fallback logic to avoid using unshare entirely in limited isolation
+	if hasNamespacePrivileges && !inContainer {
+		// Full isolation approach for pure Linux environments
+		runWithNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
+	} else {
+		runWithoutNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
+	}
+
+	fmt.Printf("Container %s exited\n", containerID)
 }
 
 func initializeBaseLayer(baseLayerPath string) error {
-    // Create essential directories in the base layer
-    dirs := []string{"/bin", "/dev", "/etc", "/proc", "/sys", "/tmp"}
-    for _, dir := range dirs {
-        if err := os.MkdirAll(filepath.Join(baseLayerPath, dir), 0755); err != nil {
-            return fmt.Errorf("failed to create directory %s: %v", dir, err)
-        }
-    }
-    
-    // Retain baseLayerPath for potential future use
-    fmt.Printf("Base layer path: %s\n", baseLayerPath)
+	// Create essential directories in the base layer
+	dirs := []string{"/bin", "/dev", "/etc", "/proc", "/sys", "/tmp"}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(filepath.Join(baseLayerPath, dir), 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %v", dir, err)
+		}
+	}
 
-    // Ensure busybox is properly copied and symlinks are created
-    if busyboxPath, err := exec.LookPath("busybox"); err == nil {
-        fmt.Printf("Busybox found at: %s\n", busyboxPath)
-        if err := copyFile(busyboxPath, filepath.Join(baseLayerPath, "bin/busybox")); err != nil {
-            return fmt.Errorf("failed to copy busybox: %v", err)
-        }
+	// Retain baseLayerPath for potential future use
+	fmt.Printf("Base layer path: %s\n", baseLayerPath)
 
-        // Create symlinks for common commands
-        commands := []string{"sh", "ls", "echo", "cat", "ps"}
-        for _, cmd := range commands {
-            linkPath := filepath.Join(baseLayerPath, "bin", cmd)
-            if err := os.Symlink("busybox", linkPath); err != nil {
-                fmt.Printf("Warning: Failed to create symlink for %s: %v\n", cmd, err)
-            }
-        }
-    } else {
-        return fallbackToHostBinaries(baseLayerPath)
-    }
+	// Ensure busybox is properly copied and symlinks are created
+	if busyboxPath, err := exec.LookPath("busybox"); err == nil {
+		fmt.Printf("Busybox found at: %s\n", busyboxPath)
+		if err := copyFile(busyboxPath, filepath.Join(baseLayerPath, "bin/busybox")); err != nil {
+			return fmt.Errorf("failed to copy busybox: %v", err)
+		}
 
-    // Verify that essential commands are available in the base layer
-    essentialCommands := []string{"sh", "ls", "echo", "cat", "ps"}
-    for _, cmd := range essentialCommands {
-        cmdPath := filepath.Join(baseLayerPath, "bin", cmd)
-        if _, err := os.Stat(cmdPath); os.IsNotExist(err) {
-            return fmt.Errorf("essential command %s is missing in the base layer", cmd)
-        }
-    }
+		// Create symlinks for common commands
+		commands := []string{"sh", "ls", "echo", "cat", "ps"}
+		for _, cmd := range commands {
+			linkPath := filepath.Join(baseLayerPath, "bin", cmd)
+			if err := os.Symlink("busybox", linkPath); err != nil {
+				fmt.Printf("Warning: Failed to create symlink for %s: %v\n", cmd, err)
+			}
+		}
+	} else {
+		return fallbackToHostBinaries(baseLayerPath)
+	}
 
-    // Debugging: Verify that busybox and symlinks are correctly set up
-    busyboxPath := filepath.Join(baseLayerPath, "bin/busybox")
-    if _, err := os.Stat(busyboxPath); os.IsNotExist(err) {
-        return fmt.Errorf("busybox binary is missing in the base layer: %s", busyboxPath)
-    }
+	// Verify that essential commands are available in the base layer
+	essentialCommands := []string{"sh", "ls", "echo", "cat", "ps"}
+	for _, cmd := range essentialCommands {
+		cmdPath := filepath.Join(baseLayerPath, "bin", cmd)
+		if _, err := os.Stat(cmdPath); os.IsNotExist(err) {
+			return fmt.Errorf("essential command %s is missing in the base layer", cmd)
+		}
+	}
 
-    for _, cmd := range []string{"sh", "ls", "echo", "cat", "ps"} {
-        symlinkPath := filepath.Join(baseLayerPath, "bin", cmd)
-        if _, err := os.Lstat(symlinkPath); os.IsNotExist(err) {
-            return fmt.Errorf("symlink for %s is missing in the base layer: %s", cmd, symlinkPath)
-        }
-    }
+	// Debugging: Verify that busybox and symlinks are correctly set up
+	busyboxPath := filepath.Join(baseLayerPath, "bin/busybox")
+	if _, err := os.Stat(busyboxPath); os.IsNotExist(err) {
+		return fmt.Errorf("busybox binary is missing in the base layer: %s", busyboxPath)
+	}
 
-    // Debugging: Verify the correctness of the sh symlink
-    shSymlinkPath := filepath.Join(baseLayerPath, "bin/sh")
-    if target, err := os.Readlink(shSymlinkPath); err != nil {
-        return fmt.Errorf("failed to read symlink for sh: %v", err)
-    } else if target != "busybox" {
-        return fmt.Errorf("sh symlink does not point to busybox: %s", target)
-    }
+	for _, cmd := range []string{"sh", "ls", "echo", "cat", "ps"} {
+		symlinkPath := filepath.Join(baseLayerPath, "bin", cmd)
+		if _, err := os.Lstat(symlinkPath); os.IsNotExist(err) {
+			return fmt.Errorf("symlink for %s is missing in the base layer: %s", cmd, symlinkPath)
+		}
+	}
 
-    fmt.Printf("Verified: sh symlink correctly points to busybox at %s\n", shSymlinkPath)
+	// Debugging: Verify the correctness of the sh symlink
+	shSymlinkPath := filepath.Join(baseLayerPath, "bin/sh")
+	if target, err := os.Readlink(shSymlinkPath); err != nil {
+		return fmt.Errorf("failed to read symlink for sh: %v", err)
+	} else if target != "busybox" {
+		return fmt.Errorf("sh symlink does not point to busybox: %s", target)
+	}
 
-    // Debugging: Verify busybox and symlinks in the container's rootfs
-    rootfsBusyboxPath := filepath.Join(baseLayerPath, "bin/busybox")
-    if _, err := os.Stat(rootfsBusyboxPath); os.IsNotExist(err) {
-        return fmt.Errorf("busybox binary is missing in the container's rootfs: %s", rootfsBusyboxPath)
-    }
+	fmt.Printf("Verified: sh symlink correctly points to busybox at %s\n", shSymlinkPath)
 
-    for _, cmd := range []string{"sh", "ls", "echo", "cat", "ps"} {
-        symlinkPath := filepath.Join(baseLayerPath, "bin", cmd)
-        if _, err := os.Lstat(symlinkPath); os.IsNotExist(err) {
-            return fmt.Errorf("symlink for %s is missing in the container's rootfs: %s", cmd, symlinkPath)
-        }
-    }
+	// Debugging: Verify busybox and symlinks in the container's rootfs
+	rootfsBusyboxPath := filepath.Join(baseLayerPath, "bin/busybox")
+	if _, err := os.Stat(rootfsBusyboxPath); os.IsNotExist(err) {
+		return fmt.Errorf("busybox binary is missing in the container's rootfs: %s", rootfsBusyboxPath)
+	}
 
-    fmt.Printf("Verified: busybox and symlinks are correctly set up in the container's rootfs.\n")
+	for _, cmd := range []string{"sh", "ls", "echo", "cat", "ps"} {
+		symlinkPath := filepath.Join(baseLayerPath, "bin", cmd)
+		if _, err := os.Lstat(symlinkPath); os.IsNotExist(err) {
+			return fmt.Errorf("symlink for %s is missing in the container's rootfs: %s", cmd, symlinkPath)
+		}
+	}
 
-    // Debugging: Verify that the echo binary and symlink are correctly set up
-    echoPath := filepath.Join(baseLayerPath, "bin/echo")
-    if _, err := os.Lstat(echoPath); os.IsNotExist(err) {
-        return fmt.Errorf("echo binary or symlink is missing in the base layer: %s", echoPath)
-    }
+	fmt.Printf("Verified: busybox and symlinks are correctly set up in the container's rootfs.\n")
 
-    fmt.Printf("Verified: echo binary or symlink exists at %s\n", echoPath)
+	// Debugging: Verify that the echo binary and symlink are correctly set up
+	echoPath := filepath.Join(baseLayerPath, "bin/echo")
+	if _, err := os.Lstat(echoPath); os.IsNotExist(err) {
+		return fmt.Errorf("echo binary or symlink is missing in the base layer: %s", echoPath)
+	}
 
-    // Debugging: List contents of the /bin directory in the base layer
-    binDir := filepath.Join(baseLayerPath, "bin")
-    entries, err := os.ReadDir(binDir)
-    if err != nil {
-        return fmt.Errorf("failed to read /bin directory: %v", err)
-    }
-    fmt.Println("Contents of /bin directory:")
-    for _, entry := range entries {
-        fmt.Printf("- %s\n", entry.Name())
-    }
+	fmt.Printf("Verified: echo binary or symlink exists at %s\n", echoPath)
 
-    // Debugging: Attempt to execute busybox directly
-    busyboxTestCmd := exec.Command(filepath.Join(binDir, "busybox"), "--help")
-    busyboxTestCmd.Stdout = os.Stdout
-    busyboxTestCmd.Stderr = os.Stderr
-    if err := busyboxTestCmd.Run(); err != nil {
-        return fmt.Errorf("failed to execute busybox: %v", err)
-    }
+	// Debugging: List contents of the /bin directory in the base layer
+	binDir := filepath.Join(baseLayerPath, "bin")
+	entries, err := os.ReadDir(binDir)
+	if err != nil {
+		return fmt.Errorf("failed to read /bin directory: %v", err)
+	}
+	fmt.Println("Contents of /bin directory:")
+	for _, entry := range entries {
+		fmt.Printf("- %s\n", entry.Name())
+	}
 
-    fmt.Println("Busybox and symlinks are correctly set up in the base layer.")
-    
-    return nil
+	// Debugging: Attempt to execute busybox directly
+	busyboxTestCmd := exec.Command(filepath.Join(binDir, "busybox"), "--help")
+	busyboxTestCmd.Stdout = os.Stdout
+	busyboxTestCmd.Stderr = os.Stderr
+	if err := busyboxTestCmd.Run(); err != nil {
+		return fmt.Errorf("failed to execute busybox: %v", err)
+	}
+
+	fmt.Println("Busybox and symlinks are correctly set up in the base layer.")
+
+	return nil
 }
 
 // runWithNamespaces uses full Linux namespace isolation
 func runWithNamespaces(containerID, rootfs, command string, args []string) {
 	cmd := exec.Command(command, args...)
-	
+
 	// Set up namespaces for isolation
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWUTS | // Hostname isolation
-			syscall.CLONE_NEWPID | // Process ID isolation 
-			syscall.CLONE_NEWNS,   // Mount isolation
+			syscall.CLONE_NEWPID | // Process ID isolation
+			syscall.CLONE_NEWNS, // Mount isolation
 	}
-	
+
 	// Add network isolation if available
 	if hasNamespacePrivileges {
 		cmd.SysProcAttr.Cloneflags |= syscall.CLONE_NEWNET
 	}
-	
+
 	// Use the container's rootfs
 	cmd.SysProcAttr.Chroot = rootfs
-	
+
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	
+
 	// Set up resource constraints if available
 	if hasCgroupAccess {
 		must(setupCgroups(containerID, 100*1024*1024))
 	}
-	
+
 	if err := cmd.Run(); err != nil {
 		fmt.Println("Error:", err)
 		os.Exit(1)
@@ -476,15 +512,15 @@ func runWithNamespaces(containerID, rootfs, command string, args []string) {
 
 // Reintroduce runWithoutNamespaces for simplicity and modularity
 func runWithoutNamespaces(containerID, rootfs, command string, args []string) {
-    fmt.Println("Warning: Namespace isolation is not permitted. Executing without isolation.")
-    cmd := exec.Command(command, args...)
-    cmd.Stdin = os.Stdin
-    cmd.Stdout = os.Stdout
-    cmd.Stderr = os.Stderr
-    if err := cmd.Run(); err != nil {
-        fmt.Printf("Error: %v\n", err)
-        os.Exit(1)
-    }
+	fmt.Println("Warning: Namespace isolation is not permitted. Executing without isolation.")
+	cmd := exec.Command(command, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func createMinimalRootfs(rootfs string) error {
@@ -514,7 +550,7 @@ func createMinimalRootfs(rootfs string) error {
 		if err := copyFile(busyboxPath, filepath.Join(rootfs, "bin/busybox")); err != nil {
 			return fmt.Errorf("failed to copy busybox: %v", err)
 		}
-		
+
 		// Create symlinks for common commands
 		for _, cmd := range []string{"sh", "ls", "echo", "cat", "ps"} {
 			linkPath := filepath.Join(rootfs, "bin", cmd)
@@ -538,7 +574,7 @@ func createMinimalRootfs(rootfs string) error {
 	if err := copyDir(baseLayerPath, rootfs); err != nil {
 		return fmt.Errorf("failed to copy base layer to rootfs: %v", err)
 	}
-	
+
 	// Create a record of this layer
 	layer := ImageLayer{
 		ID:            baseLayerID,
@@ -556,52 +592,52 @@ func createMinimalRootfs(rootfs string) error {
 
 // Add this function to copy directories
 func copyDir(src, dst string) error {
-    return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-        if err != nil {
-            return err
-        }
-        
-        // Calculate relative path
-        relPath, err := filepath.Rel(src, path)
-        if err != nil {
-            return err
-        }
-        
-        // Skip if it's the root directory
-        if relPath == "." {
-            return nil
-        }
-        
-        // Create target path
-        targetPath := filepath.Join(dst, relPath)
-        
-        // If it's a directory, create it
-        if info.IsDir() {
-            return os.MkdirAll(targetPath, info.Mode())
-        }
-        
-        // If it's a file, copy it
-        return copyFile(path, targetPath)
-    })
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Calculate relative path
+		relPath, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+
+		// Skip if it's the root directory
+		if relPath == "." {
+			return nil
+		}
+
+		// Create target path
+		targetPath := filepath.Join(dst, relPath)
+
+		// If it's a directory, create it
+		if info.IsDir() {
+			return os.MkdirAll(targetPath, info.Mode())
+		}
+
+		// If it's a file, copy it
+		return copyFile(path, targetPath)
+	})
 }
 
 // Implement the saveLayerMetadata function
 func saveLayerMetadata(layer ImageLayer) error {
-    // Serialize the layer metadata to JSON
-    metadataFile := filepath.Join(layersDir, layer.ID+".json")
-    file, err := os.Create(metadataFile)
-    if err != nil {
-        return fmt.Errorf("failed to create metadata file: %v", err)
-    }
-    defer file.Close()
+	// Serialize the layer metadata to JSON
+	metadataFile := filepath.Join(layersDir, layer.ID+".json")
+	file, err := os.Create(metadataFile)
+	if err != nil {
+		return fmt.Errorf("failed to create metadata file: %v", err)
+	}
+	defer file.Close()
 
-    encoder := json.NewEncoder(file)
-    if err := encoder.Encode(layer); err != nil {
-        return fmt.Errorf("failed to write metadata to file: %v", err)
-    }
+	encoder := json.NewEncoder(file)
+	if err := encoder.Encode(layer); err != nil {
+		return fmt.Errorf("failed to write metadata to file: %v", err)
+	}
 
-    fmt.Printf("Metadata for layer %s saved to %s\n", layer.ID, metadataFile)
-    return nil
+	fmt.Printf("Metadata for layer %s saved to %s\n", layer.ID, metadataFile)
+	return nil
 }
 
 func mountLayeredFilesystem(layers []string, rootfs string) error {
@@ -630,32 +666,32 @@ func setupCgroups(containerID string, memoryLimit int) error {
 	if !hasCgroupAccess {
 		return nil
 	}
-	
+
 	// Create cgroup
 	cgroupPath := fmt.Sprintf("/sys/fs/cgroup/memory/basic-docker/%s", containerID)
 	if err := os.MkdirAll(cgroupPath, 0755); err != nil {
 		return fmt.Errorf("failed to create cgroup: %v", err)
 	}
-	
+
 	// Set memory limit
 	if err := os.WriteFile(
-		fmt.Sprintf("%s/memory.limit_in_bytes", cgroupPath), 
-		[]byte(fmt.Sprintf("%d", memoryLimit)), 
+		fmt.Sprintf("%s/memory.limit_in_bytes", cgroupPath),
+		[]byte(fmt.Sprintf("%d", memoryLimit)),
 		0644,
 	); err != nil {
 		return fmt.Errorf("failed to set memory limit: %v", err)
 	}
-	
+
 	// Add current process to cgroup
 	pid := os.Getpid()
 	if err := os.WriteFile(
-		fmt.Sprintf("%s/cgroup.procs", cgroupPath), 
-		[]byte(fmt.Sprintf("%d", pid)), 
+		fmt.Sprintf("%s/cgroup.procs", cgroupPath),
+		[]byte(fmt.Sprintf("%d", pid)),
 		0644,
 	); err != nil {
 		return fmt.Errorf("failed to add process to cgroup: %v", err)
 	}
-	
+
 	return nil
 }
 
@@ -722,12 +758,12 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	// Write to the destination file
 	if err := os.WriteFile(dst, data, 0755); err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 
@@ -747,60 +783,60 @@ func must(err error) {
 }
 
 func testMultiLayerMount() {
-    // Create a base layer
-    baseLayerID := "base-layer-" + fmt.Sprintf("%d", time.Now().Unix())
-    baseLayerPath := filepath.Join(baseDir, "layers", baseLayerID)
-    if err := os.MkdirAll(baseLayerPath, 0755); err != nil {
-        fmt.Printf("Error creating base layer: %v\n", err)
-        return
-    }
-    
-    // Add a file to the base layer
-    if err := os.WriteFile(filepath.Join(baseLayerPath, "base.txt"), []byte("Base layer file"), 0644); err != nil {
-        fmt.Printf("Error creating base layer file: %v\n", err)
-        return
-    }
-    
-    // Create a second layer
-    appLayerID := "app-layer-" + fmt.Sprintf("%d", time.Now().Unix())
-    appLayerPath := filepath.Join(baseDir, "layers", appLayerID)
-    if err := os.MkdirAll(appLayerPath, 0755); err != nil {
-        fmt.Printf("Error creating app layer: %v\n", err)
-        return
-    }
-    
-    // Retain appLayerPath for potential future use
-    fmt.Printf("App layer path: %s\n", appLayerPath)
+	// Create a base layer
+	baseLayerID := "base-layer-" + fmt.Sprintf("%d", time.Now().Unix())
+	baseLayerPath := filepath.Join(baseDir, "layers", baseLayerID)
+	if err := os.MkdirAll(baseLayerPath, 0755); err != nil {
+		fmt.Printf("Error creating base layer: %v\n", err)
+		return
+	}
 
-    // Add a file to the app layer
-    if err := os.WriteFile(filepath.Join(appLayerPath, "app.txt"), []byte("App layer file"), 0644); err != nil {
-        fmt.Printf("Error creating app layer file: %v\n", err)
-        return
-    }
-    
-    // Create a target directory
-    targetPath := filepath.Join(baseDir, "test-mount")
-    
-    // Mount the layers
-    layers := []string{baseLayerID, appLayerID}
-    if err := mountLayeredFilesystem(layers, targetPath); err != nil {
-        fmt.Printf("Error mounting layers: %v\n", err)
-        return
-    }
-    
-    // Check if files exist
-    if _, err := os.Stat(filepath.Join(targetPath, "base.txt")); err != nil {
-        fmt.Printf("Base layer file not found: %v\n", err)
-        return
-    }
-    
-    if _, err := os.Stat(filepath.Join(targetPath, "app.txt")); err != nil {
-        fmt.Printf("App layer file not found: %v\n", err)
-        return
-    }
-    
-    fmt.Println("Multi-layer mount test successful!")
-    fmt.Printf("Mounted layers at: %s\n", targetPath)
+	// Add a file to the base layer
+	if err := os.WriteFile(filepath.Join(baseLayerPath, "base.txt"), []byte("Base layer file"), 0644); err != nil {
+		fmt.Printf("Error creating base layer file: %v\n", err)
+		return
+	}
+
+	// Create a second layer
+	appLayerID := "app-layer-" + fmt.Sprintf("%d", time.Now().Unix())
+	appLayerPath := filepath.Join(baseDir, "layers", appLayerID)
+	if err := os.MkdirAll(appLayerPath, 0755); err != nil {
+		fmt.Printf("Error creating app layer: %v\n", err)
+		return
+	}
+
+	// Retain appLayerPath for potential future use
+	fmt.Printf("App layer path: %s\n", appLayerPath)
+
+	// Add a file to the app layer
+	if err := os.WriteFile(filepath.Join(appLayerPath, "app.txt"), []byte("App layer file"), 0644); err != nil {
+		fmt.Printf("Error creating app layer file: %v\n", err)
+		return
+	}
+
+	// Create a target directory
+	targetPath := filepath.Join(baseDir, "test-mount")
+
+	// Mount the layers
+	layers := []string{baseLayerID, appLayerID}
+	if err := mountLayeredFilesystem(layers, targetPath); err != nil {
+		fmt.Printf("Error mounting layers: %v\n", err)
+		return
+	}
+
+	// Check if files exist
+	if _, err := os.Stat(filepath.Join(targetPath, "base.txt")); err != nil {
+		fmt.Printf("Base layer file not found: %v\n", err)
+		return
+	}
+
+	if _, err := os.Stat(filepath.Join(targetPath, "app.txt")); err != nil {
+		fmt.Printf("App layer file not found: %v\n", err)
+		return
+	}
+
+	fmt.Println("Multi-layer mount test successful!")
+	fmt.Printf("Mounted layers at: %s\n", targetPath)
 }
 
 func execCommand() {

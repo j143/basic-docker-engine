@@ -12,7 +12,7 @@ mkdir -p "$IMAGES_DIR"
 
 # Build the basic-docker binary with error handling
 echo "==== Building Project ===="
-if ! go build -o basic-docker main.go image.go; then
+if ! go build -o basic-docker main.go network.go image.go; then
     echo "Error: Build failed. Please check the errors above." >&2
     exit 1
 fi
@@ -33,6 +33,24 @@ sudo ./basic-docker ps
 # List images
 echo -e "\n\n==== Listing Images ===="
 sudo ./basic-docker images
+
+# Test networking functionality
+
+# Create a network
+echo -e "\n\n==== Creating Network ===="
+./basic-docker network-create test-network
+
+# List networks
+echo -e "\n\n==== Listing Networks ===="
+./basic-docker network-list
+
+# Delete the network
+echo -e "\n\n==== Deleting Network ===="
+./basic-docker network-delete net-1
+
+# List networks again
+echo -e "\n\n==== Listing Networks After Deletion ===="
+./basic-docker network-list
 
 # Clean up temporary directories
 rm -rf "$BASE_DIR"
