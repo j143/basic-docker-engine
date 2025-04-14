@@ -16,18 +16,20 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Install Go
-      run: |
-        sudo apt update
-        sudo apt install -y golang
-        go version
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          $GOPATH/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
 
-    - name: Set up Go environment
-      run: |
-        mkdir -p $HOME/go/{bin,src,pkg}
-        echo "export GOPATH=$HOME/go" >> $HOME/.bashrc
-        echo "export PATH=$PATH:$HOME/go/bin" >> $HOME/.bashrc
-        source $HOME/.bashrc
+    - name: Use Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '^1.20'
 
     - name: Install dependencies
       run: go mod tidy
