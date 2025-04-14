@@ -36,6 +36,50 @@ type ImageLayer struct {
 	AppLayerPath  string
 }
 
+// ResourceCapsule represents a self-contained, versioned resource unit.
+type ResourceCapsule struct {
+	Name    string
+	Version string
+	Path    string
+}
+
+// CapsuleManager handles the lifecycle of Resource Capsules.
+type CapsuleManager struct {
+	Capsules map[string]ResourceCapsule
+}
+
+// NewCapsuleManager initializes a new CapsuleManager.
+func NewCapsuleManager() *CapsuleManager {
+	return &CapsuleManager{
+		Capsules: make(map[string]ResourceCapsule),
+	}
+}
+
+// AddCapsule adds a new Resource Capsule to the manager.
+func (cm *CapsuleManager) AddCapsule(name, version, path string) {
+	key := name + ":" + version
+	cm.Capsules[key] = ResourceCapsule{Name: name, Version: version, Path: path}
+}
+
+// GetCapsule retrieves a Resource Capsule by name and version.
+func (cm *CapsuleManager) GetCapsule(name, version string) (ResourceCapsule, bool) {
+	key := name + ":" + version
+	capsule, exists := cm.Capsules[key]
+	return capsule, exists
+}
+
+// AttachCapsule attaches a capsule to a container.
+func (cm *CapsuleManager) AttachCapsule(containerID, name, version string) error {
+	key := name + ":" + version
+	_, exists := cm.Capsules[key]
+	if !exists {
+		return fmt.Errorf("capsule %s:%s not found", name, version)
+	}
+	// Logic to attach the capsule to the container's filesystem.
+	fmt.Printf("Attaching capsule %s:%s to container %s\n", name, version, containerID)
+	return nil
+}
+
 // To initialize the directories
 func initDirectories() error {
 	dirs := []string{

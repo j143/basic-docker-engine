@@ -107,3 +107,37 @@ func TestGetContainerStatus(t *testing.T) {
 		t.Errorf("Expected status 'Stopped', but got '%s'", status)
 	}
 }
+
+// TestCapsuleManager:
+// - Verifies the CapsuleManager's functionality, including adding, retrieving, and attaching Resource Capsules.
+// - Setup: Initializes a CapsuleManager instance.
+// - Expected Outcome: Capsules are added, retrieved, and attached correctly.
+
+func TestCapsuleManager(t *testing.T) {
+	cm := NewCapsuleManager()
+
+	// Add a capsule
+	cm.AddCapsule("libssl", "1.1.1", "/usr/lib/libssl.so")
+
+	// Retrieve the capsule
+	capsule, exists := cm.GetCapsule("libssl", "1.1.1")
+	if !exists {
+		t.Fatalf("Expected capsule libssl:1.1.1 to exist")
+	}
+
+	if capsule.Name != "libssl" || capsule.Version != "1.1.1" || capsule.Path != "/usr/lib/libssl.so" {
+		t.Errorf("Capsule data mismatch: got %+v", capsule)
+	}
+
+	// Attach the capsule to a container
+	err := cm.AttachCapsule("container-1234", "libssl", "1.1.1")
+	if err != nil {
+		t.Errorf("Failed to attach capsule: %v", err)
+	}
+
+	// Try to attach a non-existent capsule
+	err = cm.AttachCapsule("container-1234", "libcrypto", "1.0.0")
+	if err == nil {
+		t.Errorf("Expected error when attaching non-existent capsule, got nil")
+	}
+}
