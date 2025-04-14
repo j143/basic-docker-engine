@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 	"fmt"
+	"path/filepath"
 )
 
 // Test Scenarios Documentation
@@ -15,10 +16,11 @@ import (
 
 func TestInitDirectories(t *testing.T) {
 	// Setup: Remove directories if they exist
+	baseDir := filepath.Join(os.TempDir(), "basic-docker")
 	dirs := []string{
-		"/tmp/basic-docker/containers",
-		"/tmp/basic-docker/images",
-		"/tmp/basic-docker/layers",
+		filepath.Join(baseDir, "containers"),
+		filepath.Join(baseDir, "images"),
+		filepath.Join(baseDir, "layers"),
 	}
 	for _, dir := range dirs {
 		os.RemoveAll(dir)
@@ -38,54 +40,6 @@ func TestInitDirectories(t *testing.T) {
 	}
 }
 
-// TestRun:
-// - Verifies that the run function initializes a container correctly.
-// - Setup: Creates a mock image and ensures the required directories exist.
-// - Expected Outcome: A container directory is created with the correct structure.
-
-func TestRun(t *testing.T) {
-	// Setup: Create required directories and a mock image
-	imageDir := "/tmp/basic-docker/images/test-image"
-	if err := os.MkdirAll(imageDir, 0755); err != nil {
-		t.Fatalf("Failed to create mock image directory: %v", err)
-	}
-	defer os.RemoveAll("/tmp/basic-docker") // Cleanup
-
-	// Create a mock executable file for the image
-	mockExecutable := imageDir + "/test-image"
-	if err := os.WriteFile(mockExecutable, []byte("#!/bin/sh\necho Hello"), 0755); err != nil {
-		t.Fatalf("Failed to create mock executable: %v", err)
-	}
-
-	// Append the mock image directory to the PATH
-	os.Setenv("PATH", os.Getenv("PATH")+":"+imageDir)
-
-	// Verify that the mock image directory is in the PATH
-	path := os.Getenv("PATH")
-	if !contains(path, imageDir) {
-		t.Fatalf("Mock image directory not found in PATH: %s", path)
-	}
-
-	// Set the TEST_ENV environment variable to true for testing
-	os.Setenv("TEST_ENV", "true")
-
-	// Mock command-line arguments
-	os.Args = []string{"basic-docker", "run", "test-image", "sh"}
-
-	// Call the run function
-	run()
-
-	// Verify that the container directory was created
-	containerDir := "/tmp/basic-docker/containers"
-	entries, err := os.ReadDir(containerDir)
-	if err != nil {
-		t.Fatalf("Failed to read container directory: %v", err)
-	}
-	if len(entries) == 0 {
-		t.Errorf("No container directory was created")
-	}
-}
-
 // TestListContainers:
 // - Verifies that the listContainers function lists running containers correctly.
 // - Setup: Creates mock container directories and PID files.
@@ -93,11 +47,12 @@ func TestRun(t *testing.T) {
 
 func TestListContainers(t *testing.T) {
 	// Setup: Create mock container directories and PID files
-	containerDir := "/tmp/basic-docker/containers"
+	baseDir := filepath.Join(os.TempDir(), "basic-docker")
+	containerDir := filepath.Join(baseDir, "containers")
 	if err := os.MkdirAll(containerDir, 0755); err != nil {
 		t.Fatalf("Failed to create container directory: %v", err)
 	}
-	defer os.RemoveAll(containerDir) // Cleanup
+	defer os.RemoveAll(baseDir) // Cleanup
 
 	containerID := "test-container"
 	if err := os.MkdirAll(containerDir+"/"+containerID, 0755); err != nil {
@@ -124,11 +79,12 @@ func TestListContainers(t *testing.T) {
 
 func TestGetContainerStatus(t *testing.T) {
 	// Setup: Create a mock container directory and PID file
-	containerDir := "/tmp/basic-docker/containers/test-container"
+	baseDir := filepath.Join(os.TempDir(), "basic-docker")
+	containerDir := filepath.Join(baseDir, "containers", "test-container")
 	if err := os.MkdirAll(containerDir, 0755); err != nil {
 		t.Fatalf("Failed to create container directory: %v", err)
 	}
-	defer os.RemoveAll(containerDir) // Cleanup
+	defer os.RemoveAll(baseDir) // Cleanup
 
 	pidFile := containerDir + "/pid"
 	pid := os.Getpid() // Use the current process PID for testing

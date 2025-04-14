@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -16,16 +17,18 @@ import (
 // Additional test scenarios can be documented here as new tests are added.
 
 func TestListImages(t *testing.T) {
-	// Setup: Create a temporary directory for images
-	tempDir := "/tmp/basic-docker/images"
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
+	baseDir := filepath.Join(os.TempDir(), "basic-docker")
+	imagesDir := filepath.Join(baseDir, "images")
+
+	// Setup: Create the images directory
+	if err := os.MkdirAll(imagesDir, 0755); err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}
-	defer os.RemoveAll(tempDir) // Cleanup
+	defer os.RemoveAll(baseDir) // Cleanup
 
 	// Create a mock image directory
 	imageName := "test-image"
-	if err := os.MkdirAll(tempDir+"/"+imageName, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(imagesDir, imageName), 0755); err != nil {
 		t.Fatalf("Failed to create mock image directory: %v", err)
 	}
 

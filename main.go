@@ -21,9 +21,11 @@ var (
 	hasNamespacePrivileges = false
 	// Set to true if we have cgroup access
 	hasCgroupAccess = false
-	imagesDir = "/tmp/basic-docker/images"
-	layersDir = "/tmp/basic-docker/layers"
 )
+
+var baseDir = filepath.Join(os.TempDir(), "basic-docker")
+var imagesDir = filepath.Join(baseDir, "images")
+var layersDir = filepath.Join(baseDir, "layers")
 
 // Define the ImageLayer type
 type ImageLayer struct {
@@ -37,14 +39,13 @@ type ImageLayer struct {
 // To initialize the directories
 func initDirectories() error {
 	dirs := []string{
-		"/tmp/basic-docker/containers",
+		filepath.Join(baseDir, "containers"),
 		imagesDir,
 		layersDir,
 	}
-
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return err
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
 	return nil
@@ -172,12 +173,12 @@ func run() {
     }
 
     // Create rootfs for this container
-    rootfs := filepath.Join("/tmp/basic-docker/containers", containerID, "rootfs")
+    rootfs := filepath.Join(baseDir, "containers", containerID, "rootfs")
     
     // Instead of calling createMinimalRootfs directly:
     // 1. Create a base layer if it doesn't exist
     baseLayerID := "base-layer"
-    baseLayerPath := filepath.Join("/tmp/basic-docker/layers", baseLayerID)
+    baseLayerPath := filepath.Join(baseDir, "layers", baseLayerID)
     
     if _, err := os.Stat(baseLayerPath); os.IsNotExist(err) {
         // Create the base layer
@@ -209,7 +210,7 @@ func run() {
     
     // 2. Create an app layer for this specific container (optional)
     appLayerID := "app-layer-" + containerID
-    appLayerPath := filepath.Join("/tmp/basic-docker/layers", appLayerID)
+    appLayerPath := filepath.Join(baseDir, "layers", appLayerID)
     
     // Use the appLayerID variable to log its creation
     fmt.Printf("App layer created with ID: %s\n", appLayerID)
@@ -234,7 +235,7 @@ func run() {
     must(mountLayeredFilesystem(layers, rootfs))
 
     // Write the PID of the current process to a file
-    pidFile := filepath.Join("/tmp/basic-docker/containers", containerID, "pid")
+    pidFile := filepath.Join(baseDir, "containers", containerID, "pid")
     fmt.Printf("Debug: Writing PID file for container %s at %s\n", containerID, pidFile)
     fmt.Printf("Debug: Current process PID is %d\n", os.Getpid())
     if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
@@ -594,7 +595,7 @@ func setupCgroups(containerID string, memoryLimit int) error {
 }
 
 func getContainerStatus(containerID string) string {
-	pidFile := filepath.Join("/tmp/basic-docker/containers", containerID, "pid")
+	pidFile := filepath.Join(baseDir, "containers", containerID, "pid")
 	pidData, err := os.ReadFile(pidFile)
 	if err != nil {
 		return "Stopped"
@@ -617,7 +618,7 @@ func getContainerStatus(containerID string) string {
 }
 
 func listContainers() {
-	containerDir := "/tmp/basic-docker/containers"
+	containerDir := filepath.Join(baseDir, "containers")
 	fmt.Println("CONTAINER ID\tSTATUS\tCOMMAND")
 
 	if _, err := os.Stat(containerDir); os.IsNotExist(err) {
@@ -683,7 +684,7 @@ func must(err error) {
 func testMultiLayerMount() {
     // Create a base layer
     baseLayerID := "base-layer-" + fmt.Sprintf("%d", time.Now().Unix())
-    baseLayerPath := filepath.Join("/tmp/basic-docker/layers", baseLayerID)
+    baseLayerPath := filepath.Join(baseDir, "layers", baseLayerID)
     if err := os.MkdirAll(baseLayerPath, 0755); err != nil {
         fmt.Printf("Error creating base layer: %v\n", err)
         return
@@ -697,7 +698,7 @@ func testMultiLayerMount() {
     
     // Create a second layer
     appLayerID := "app-layer-" + fmt.Sprintf("%d", time.Now().Unix())
-    appLayerPath := filepath.Join("/tmp/basic-docker/layers", appLayerID)
+    appLayerPath := filepath.Join(baseDir, "layers", appLayerID)
     if err := os.MkdirAll(appLayerPath, 0755); err != nil {
         fmt.Printf("Error creating app layer: %v\n", err)
         return
@@ -713,7 +714,7 @@ func testMultiLayerMount() {
     }
     
     // Create a target directory
-    targetPath := filepath.Join("/tmp/basic-docker/test-mount")
+    targetPath := filepath.Join(baseDir, "test-mount")
     
     // Mount the layers
     layers := []string{baseLayerID, appLayerID}
@@ -748,14 +749,14 @@ func execCommand() {
 	args := os.Args[4:]
 
 	// Check if the container directory exists
-	containerDir := filepath.Join("/tmp/basic-docker/containers", containerID)
+	containerDir := filepath.Join(baseDir, "containers", containerID)
 	if _, err := os.Stat(containerDir); os.IsNotExist(err) {
 		fmt.Printf("Error: Container %s does not exist. Please ensure the container is running.\n", containerID)
 		os.Exit(1)
 	}
 
 	// Locate the PID of the container
-	pidFile := fmt.Sprintf("/tmp/basic-docker/containers/%s/pid", containerID)
+	pidFile := filepath.Join(baseDir, "containers", containerID, "pid")
 	pidData, err := os.ReadFile(pidFile)
 	if err != nil {
 		fmt.Printf("Error: Failed to read PID file for container %s: %v\n", containerID, err)
