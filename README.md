@@ -12,10 +12,10 @@ Basic docker engine implementation from scratch
 @j143 ➜ /workspaces/basic-docker-engine (main) $ ./basic-docker 
 Environment detected: inContainer=true, hasNamespacePrivileges=true, hasCgroupAccess=false
 Usage:
-  lean-docker run <command> [args...]  - Run a command in a container
-  lean-docker ps                       - List running containers
-  lean-docker images                   - List available images
-  lean-docker info                     - Show system information
+  basic-docker run <command> [args...]  - Run a command in a container
+  basic-docker ps                       - List running containers
+  basic-docker images                   - List available images
+  basic-docker info                     - Show system information
 ```
 
 ### create necessary folders
@@ -311,7 +311,7 @@ container-1743307590    N/A     N/A
 ==== Testing with busybox ====
 Environment detected: inContainer=true, hasNamespacePrivileges=true, hasCgroupAccess=true
 Starting container container-1743307590
-Error: failed to create symlink for sh: symlink busybox /tmp/lean-docker/containers/container-1743307590/rootfs/bin/sh: file exists
+Error: failed to create symlink for sh: symlink busybox /tmp/basic-docker/containers/container-1743307590/rootfs/bin/sh: file exists
 
 
 ==== Skipping isolation tests (needs root) ====
@@ -319,3 +319,24 @@ Error: failed to create symlink for sh: symlink busybox /tmp/lean-docker/contain
 
 ==== All tests completed ====
 ```
+
+## Test Strategy
+
+### Current Testing Status
+
+```mermaid
+graph TD
+    A[Unit Tests] --> B[Integration Tests]
+    B --> C[End-to-End Tests]
+    C --> D[Verification Script]
+
+    %% Styling
+    classDef process fill:#ffe0d0,stroke:#ff8030,stroke-width:2px
+
+    class A,B,C,D process
+```
+
+- **Unit Tests**: Present in `main_test.go` and `image_test.go`.
+- **Integration Tests**: Covered partially in `verify.sh`.
+- **End-to-End Tests**: Basic functionality tested via `verify.sh`.
+- **Verification Script**: `verify.sh` runs additional checks and validations.
