@@ -141,3 +141,60 @@ func TestCapsuleManager(t *testing.T) {
 		t.Errorf("Expected error when attaching non-existent capsule, got nil")
 	}
 }
+
+// BenchmarkCapsuleAccess benchmarks the access time for Resource Capsules.
+func BenchmarkCapsuleAccess(b *testing.B) {
+	cm := NewCapsuleManager()
+	cm.AddCapsule("libssl", "1.1.1", "/usr/lib/libssl.so")
+
+	for i := 0; i < b.N; i++ {
+		_, exists := cm.GetCapsule("libssl", "1.1.1")
+		if !exists {
+			b.Fatalf("Capsule not found")
+		}
+	}
+}
+
+// BenchmarkVolumeAccess benchmarks the access time for Docker volumes.
+func BenchmarkVolumeAccess(b *testing.B) {
+	volumePath := "/tmp/docker-volume/libssl.so"
+	os.WriteFile(volumePath, []byte("dummy data"), 0644)
+	defer os.Remove(volumePath)
+
+	for i := 0; i < b.N; i++ {
+		_, err := os.Stat(volumePath)
+		if err != nil {
+			b.Fatalf("Volume not found: %v", err)
+		}
+	}
+}
+
+// BenchmarkDynamicAttachment benchmarks the dynamic attachment of Resource Capsules.
+func BenchmarkDynamicAttachment(b *testing.B) {
+	cm := NewCapsuleManager()
+	cm.AddCapsule("libssl", "1.1.1", "/usr/lib/libssl.so")
+
+	for i := 0; i < b.N; i++ {
+		err := cm.AttachCapsule("container-1234", "libssl", "1.1.1")
+		if err != nil {
+			b.Fatalf("Failed to attach capsule: %v", err)
+		}
+	}
+}
+
+// BenchmarkVolumeAttachment benchmarks the dynamic attachment of Docker volumes.
+func BenchmarkVolumeAttachment(b *testing.B) {
+	volumePath := "/tmp/docker-volume/libssl.so"
+	// Ensure the directory exists before creating the file
+	os.MkdirAll(filepath.Dir(volumePath), 0755)
+	os.WriteFile(volumePath, []byte("dummy data"), 0644)
+	defer os.Remove(volumePath)
+
+	for i := 0; i < b.N; i++ {
+		// Simulate volume attachment by checking its existence
+		_, err := os.Stat(volumePath)
+		if err != nil {
+			b.Fatalf("Volume not found: %v", err)
+		}
+	}
+}
