@@ -71,7 +71,9 @@ func (cm *CapsuleManager) GetCapsule(name, version string) (ResourceCapsule, boo
 // AttachCapsule attaches a capsule to a container.
 func (cm *CapsuleManager) AttachCapsule(containerID, name, version string) error {
 	key := name + ":" + version
+
 	capsule, exists := cm.Capsules[key]
+  
 	if !exists {
 		return fmt.Errorf("capsule %s:%s not found", name, version)
 	}
