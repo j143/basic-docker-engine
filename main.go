@@ -71,12 +71,31 @@ func (cm *CapsuleManager) GetCapsule(name, version string) (ResourceCapsule, boo
 // AttachCapsule attaches a capsule to a container.
 func (cm *CapsuleManager) AttachCapsule(containerID, name, version string) error {
 	key := name + ":" + version
-	_, exists := cm.Capsules[key]
+	capsule, exists := cm.Capsules[key]
 	if !exists {
 		return fmt.Errorf("capsule %s:%s not found", name, version)
 	}
 	// Logic to attach the capsule to the container's filesystem.
 	fmt.Printf("Attaching capsule %s:%s to container %s\n", name, version, containerID)
+
+	// Simulate the attachment by creating a symbolic link in the container's directory
+	containerDir := filepath.Join(baseDir, "containers", containerID)
+	if err := os.MkdirAll(containerDir, 0755); err != nil {
+		return fmt.Errorf("failed to create container directory: %v", err)
+	}
+	linkPath := filepath.Join(containerDir, name+"-"+version)
+
+	// If the symbolic link already exists, remove it
+	if _, err := os.Lstat(linkPath); err == nil {
+		if err := os.Remove(linkPath); err != nil {
+			return fmt.Errorf("failed to remove existing symbolic link for capsule: %v", err)
+		}
+	}
+
+	if err := os.Symlink(capsule.Path, linkPath); err != nil {
+		return fmt.Errorf("failed to create symbolic link for capsule: %v", err)
+	}
+
 	return nil
 }
 
