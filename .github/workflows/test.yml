@@ -45,6 +45,11 @@ jobs:
             exit 1
         fi
 
+    - name: Run Go tests
+      run: |
+        echo "==== Running Go Tests ===="
+        go test -v ./...
+
     - name: Run verification script
       run: |
         chmod +x verify.sh

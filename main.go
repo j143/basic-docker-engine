@@ -150,6 +150,11 @@ func printSystemInfo() {
 }
 
 func run() {
+    // Adjust the path to include the mock image directory during testing
+	if os.Getenv("TEST_ENV") == "true" {
+		os.Setenv("PATH", os.Getenv("PATH")+":"+imagesDir)
+	}
+
     // Generate a container ID
     containerID := fmt.Sprintf("container-%d", time.Now().Unix())
     fmt.Printf("Starting container %s\n", containerID)
