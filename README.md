@@ -337,6 +337,11 @@ graph TD
 ```
 
 - **Unit Tests**: Present in `main_test.go` and `image_test.go`.
+  - Includes tests for `AddResourceCapsule`, `CapsuleManager`, and Docker integration.
+  - Benchmarks for capsule and volume access.
 - **Integration Tests**: Covered partially in `verify.sh`.
+  - Verifies container creation, image listing, and network functionality.
 - **End-to-End Tests**: Basic functionality tested via `verify.sh`.
+  - Simulates real-world usage scenarios.
 - **Verification Script**: `verify.sh` runs additional checks and validations.
+  - Includes system information, container commands, and BusyBox tests.

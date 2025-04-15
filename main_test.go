@@ -192,9 +192,33 @@ func TestPing(t *testing.T) {
 	}
 }
 
-// Updated to ensure 'docker inspect' is called only once during the test.
+// Abstract Docker commands into helper functions
+func dockerInspect(containerName string) (string, error) {
+	cmd := exec.Command("docker", "inspect", containerName)
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+func dockerPs() (string, error) {
+	cmd := exec.Command("docker", "ps", "-a")
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+func dockerRm(containerName string) error {
+	cmd := exec.Command("docker", "rm", "-f", containerName)
+	_, err := cmd.CombinedOutput()
+	return err
+}
+
+// Refactor cleanup logic into a reusable function
+func cleanupDockerResources(targetPath, containerName string) {
+	os.Remove(targetPath)
+	dockerRm(containerName)
+}
+
+// Update TestAddResourceCapsuleWithDockerPsAndInspect to use helper functions
 func TestAddResourceCapsuleWithDockerPsAndInspect(t *testing.T) {
-	// Test for Docker environment
 	dockerCapsulePath := "/tmp/docker-capsule"
 	os.WriteFile(dockerCapsulePath, []byte("dummy data"), 0644)
 	defer os.Remove(dockerCapsulePath)
@@ -204,35 +228,23 @@ func TestAddResourceCapsuleWithDockerPsAndInspect(t *testing.T) {
 		t.Errorf("Failed to add resource capsule to Docker: %v. Capsule Path: %s", err, dockerCapsulePath)
 	}
 
-	// Verify symbolic link creation for Docker
 	dockerTargetPath := filepath.Join(baseDir, "containers", "test-capsule-1.0")
 	if _, err := os.Lstat(dockerTargetPath); os.IsNotExist(err) {
 		t.Errorf("Expected symbolic link not created for Docker capsule at %s. Error: %v", dockerTargetPath, err)
 	}
 
-	// Check if the container exists and inspect it
 	containerName := "test-container-test-capsule"
-	inspectCmd := exec.Command("docker", "inspect", containerName)
-	inspectOutput, inspectErr := inspectCmd.CombinedOutput()
+	inspectOutput, inspectErr := dockerInspect(containerName)
 	if inspectErr != nil {
-		// Log the error and output for debugging
-		t.Logf("'docker inspect' failed: %v\nOutput: %s\n", inspectErr, string(inspectOutput))
+		t.Logf("'docker inspect' failed: %v\nOutput: %s\n", inspectErr, inspectOutput)
 		t.Errorf("Failed to fetch 'docker inspect' output for container %s", containerName)
 	} else {
-		t.Logf("'docker inspect' output:\n%s\n", string(inspectOutput))
+		t.Logf("'docker inspect' output:\n%s\n", inspectOutput)
 	}
 
-	// Update the test to check for the correct bind mount path
 	expectedBindPath := dockerTargetPath
-	if !contains(string(inspectOutput), expectedBindPath) {
+	if !contains(inspectOutput, expectedBindPath) {
 		t.Errorf("Expected mounted capsule %s not found in 'docker inspect' output for container %s", expectedBindPath, containerName)
-	}
-
-	// Refactor cleanup into a helper function
-	cleanupDockerResources := func(targetPath, containerName string) {
-		os.Remove(targetPath)
-		cleanupCmd := exec.Command("docker", "rm", "-f", containerName)
-		cleanupCmd.CombinedOutput()
 	}
 
 	defer cleanupDockerResources(dockerTargetPath, containerName)

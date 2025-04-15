@@ -46,11 +46,21 @@ graph TD
 
 This diagram illustrates the decision-making process for adopting Resource Capsules.
 
-### Writing Best Practices
-- **Clarity**: Use simple and direct language to explain the decision.
-- **Conciseness**: Avoid unnecessary details; focus on the key points.
-- **Structure**: Organize the document into clear sections with headings.
-- **Consistency**: Use consistent terminology and formatting throughout the document.
+### Updated Design Diagram
+
+#### Resource Capsules with AddResourceCapsule Integration
+```mermaid
+graph TD
+    A[Identify Resource Sharing Needs] --> B[Evaluate Existing Methods]
+    B -->|Lack Versioning| C[Consider Resource Capsules]
+    C --> D[Design Capsule System]
+    D --> E[Implement Capsule Manager]
+    E --> F[Integrate AddResourceCapsule Functionality]
+    F --> G[Validate with TestAddResourceCapsuleWithDockerPsAndInspect]
+    G --> H[Deploy Resource Capsules]
+```
+
+This updated diagram includes the `AddResourceCapsule` function and its corresponding test case, highlighting their role in the validation and deployment of Resource Capsules.
 
 ### Future Work
 - Extend Capsule API for remote management.
@@ -85,3 +95,9 @@ To ensure compatibility and practicality, Resource Capsules will be selectively 
 - Develop detailed documentation and best practices for using Resource Capsules in these environments.
 - Gather feedback from early adopters to refine the implementation.
 - Explore automation tools to simplify capsule management in large-scale deployments.
+
+## Status
+In Review
+
+## Date
+April 12, 2025
