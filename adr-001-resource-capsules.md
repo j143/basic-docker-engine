@@ -56,3 +56,32 @@ This diagram illustrates the decision-making process for adopting Resource Capsu
 - Extend Capsule API for remote management.
 - Implement garbage collection for unused capsules.
 - Add support for capsule dependency resolution.
+
+### Selective Implementation for Real Docker Environments and Kubernetes Clusters
+
+To ensure compatibility and practicality, Resource Capsules will be selectively implemented in real Docker production environments and Kubernetes clusters. This approach allows us to:
+
+- **Leverage Existing Infrastructure**: Integrate Resource Capsules without disrupting existing workflows.
+- **Target High-Impact Use Cases**: Focus on scenarios where versioning, dynamic attachment, and isolation provide the most value.
+- **Minimize Overhead**: Avoid unnecessary complexity in environments where traditional methods suffice.
+
+#### Implementation Plan
+1. **Docker Production Environments**:
+   - Introduce Resource Capsules as an optional feature.
+   - Provide a configuration flag to enable or disable capsules per container.
+   - Ensure backward compatibility with volumes and bind mounts.
+
+2. **Kubernetes Clusters**:
+   - Extend Kubernetes storage classes to support Resource Capsules.
+   - Implement a Capsule Controller to manage capsule lifecycle within the cluster.
+   - Integrate with Kubernetes APIs for seamless deployment and scaling.
+
+#### Challenges
+- **Compatibility**: Ensuring Resource Capsules work alongside existing storage solutions.
+- **Performance**: Minimizing the performance impact of capsule management in high-load environments.
+- **Adoption**: Encouraging users to adopt Resource Capsules without mandating changes to their workflows.
+
+#### Future Work
+- Develop detailed documentation and best practices for using Resource Capsules in these environments.
+- Gather feedback from early adopters to refine the implementation.
+- Explore automation tools to simplify capsule management in large-scale deployments.

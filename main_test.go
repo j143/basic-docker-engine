@@ -5,6 +5,7 @@ import (
 	"testing"
 	"fmt"
 	"path/filepath"
+	"os/exec"
 )
 
 // Test Scenarios Documentation
@@ -189,6 +190,52 @@ func TestPing(t *testing.T) {
 	} else {
 		t.Logf("Ping failed as expected between container1 and container3: %v", err)
 	}
+}
+
+// Updated to ensure 'docker inspect' is called only once during the test.
+func TestAddResourceCapsuleWithDockerPsAndInspect(t *testing.T) {
+	// Test for Docker environment
+	dockerCapsulePath := "/tmp/docker-capsule"
+	os.WriteFile(dockerCapsulePath, []byte("dummy data"), 0644)
+	defer os.Remove(dockerCapsulePath)
+
+	err := AddResourceCapsule("docker", "test-capsule", "1.0", dockerCapsulePath)
+	if err != nil {
+		t.Errorf("Failed to add resource capsule to Docker: %v. Capsule Path: %s", err, dockerCapsulePath)
+	}
+
+	// Verify symbolic link creation for Docker
+	dockerTargetPath := filepath.Join(baseDir, "containers", "test-capsule-1.0")
+	if _, err := os.Lstat(dockerTargetPath); os.IsNotExist(err) {
+		t.Errorf("Expected symbolic link not created for Docker capsule at %s. Error: %v", dockerTargetPath, err)
+	}
+
+	// Check if the container exists and inspect it
+	containerName := "test-container-test-capsule"
+	inspectCmd := exec.Command("docker", "inspect", containerName)
+	inspectOutput, inspectErr := inspectCmd.CombinedOutput()
+	if inspectErr != nil {
+		// Log the error and output for debugging
+		t.Logf("'docker inspect' failed: %v\nOutput: %s\n", inspectErr, string(inspectOutput))
+		t.Errorf("Failed to fetch 'docker inspect' output for container %s", containerName)
+	} else {
+		t.Logf("'docker inspect' output:\n%s\n", string(inspectOutput))
+	}
+
+	// Update the test to check for the correct bind mount path
+	expectedBindPath := dockerTargetPath
+	if !contains(string(inspectOutput), expectedBindPath) {
+		t.Errorf("Expected mounted capsule %s not found in 'docker inspect' output for container %s", expectedBindPath, containerName)
+	}
+
+	// Refactor cleanup into a helper function
+	cleanupDockerResources := func(targetPath, containerName string) {
+		os.Remove(targetPath)
+		cleanupCmd := exec.Command("docker", "rm", "-f", containerName)
+		cleanupCmd.CombinedOutput()
+	}
+
+	defer cleanupDockerResources(dockerTargetPath, containerName)
 }
 
 // BenchmarkCapsuleAccess benchmarks the access time for Resource Capsules.

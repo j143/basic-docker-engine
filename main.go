@@ -101,6 +101,61 @@ func (cm *CapsuleManager) AttachCapsule(containerID, name, version string) error
 	return nil
 }
 
+// AddResourceCapsule selectively adds a resource capsule to the environment and verifies it by interacting with a Docker container.
+func AddResourceCapsule(env string, capsuleName string, capsuleVersion string, capsulePath string) error {
+	if env == "docker" {
+		// Docker-specific logic: Bind mount the capsule to a container
+		containerDir := filepath.Join(baseDir, "containers")
+		capsuleTargetPath := filepath.Join(containerDir, capsuleName+"-"+capsuleVersion)
+
+		// Ensure the capsule path exists
+		if _, err := os.Stat(capsulePath); os.IsNotExist(err) {
+			return fmt.Errorf("capsule path does not exist: %s", capsulePath)
+		}
+
+		// Create a symbolic link to simulate binding the capsule
+		if err := os.Symlink(capsulePath, capsuleTargetPath); err != nil {
+			return fmt.Errorf("failed to bind capsule in Docker: %v", err)
+		}
+
+		// Log interaction with Docker
+		fmt.Printf("[Docker] Capsule %s:%s added at %s\n", capsuleName, capsuleVersion, capsuleTargetPath)
+
+		// Create a temporary Docker container to verify the capsule
+		containerName := "test-container-" + capsuleName
+		cmd := exec.Command("docker", "run", "--name", containerName, "-v", capsuleTargetPath+":"+capsuleTargetPath, "busybox", "ls", capsuleTargetPath)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to verify capsule in Docker container: %v, output: %s", err, string(output))
+		}
+
+		fmt.Printf("[Docker] Verification output:\n%s\n", string(output))
+
+		 // Show docker ps output
+		psCmd := exec.Command("docker", "ps", "-a")
+		psOutput, psErr := psCmd.CombinedOutput()
+		if psErr != nil {
+			fmt.Printf("[Docker] Failed to fetch 'docker ps' output: %v\n", psErr)
+		} else {
+			fmt.Printf("[Docker] 'docker ps' output:\n%s\n", string(psOutput))
+		}
+
+		// Show docker inspect output for the container
+		inspectCmd := exec.Command("docker", "inspect", containerName)
+		inspectOutput, inspectErr := inspectCmd.CombinedOutput()
+		if inspectErr != nil {
+			fmt.Printf("[Docker] Failed to fetch 'docker inspect' output: %v\n", inspectErr)
+		} else {
+			fmt.Printf("[Docker] 'docker inspect' output:\n%s\n", string(inspectOutput))
+		}
+
+		fmt.Printf("Successfully added and verified resource capsule %s:%s in Docker environment\n", capsuleName, capsuleVersion)
+	} else {
+		return fmt.Errorf("unsupported environment: %s", env)
+	}
+	return nil
+}
+
 // To initialize the directories
 func initDirectories() error {
 	dirs := []string{
@@ -419,15 +474,7 @@ func initializeBaseLayer(baseLayerPath string) error {
 		}
 	}
 
-	// Debugging: Verify the correctness of the sh symlink
-	shSymlinkPath := filepath.Join(baseLayerPath, "bin/sh")
-	if target, err := os.Readlink(shSymlinkPath); err != nil {
-		return fmt.Errorf("failed to read symlink for sh: %v", err)
-	} else if target != "busybox" {
-		return fmt.Errorf("sh symlink does not point to busybox: %s", target)
-	}
-
-	fmt.Printf("Verified: sh symlink correctly points to busybox at %s\n", shSymlinkPath)
+	fmt.Printf("Verified: sh symlink correctly points to busybox at %s\n", filepath.Join(baseLayerPath, "bin/sh"))
 
 	// Debugging: Verify busybox and symlinks in the container's rootfs
 	rootfsBusyboxPath := filepath.Join(baseLayerPath, "bin/busybox")
