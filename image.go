@@ -46,15 +46,18 @@ type Registry interface {
 	FetchLayer(repo, digest string) (io.ReadCloser, error)
 }
 
-// DockerHubRegistry is a default implementation of the Registry interface for Docker Hub.
+// DockerHubRegistry is a default implementation of the Registry interface for Docker Hub or custom registries.
 type DockerHubRegistry struct {
 	BaseURL string
 }
 
-// NewDockerHubRegistry creates a new instance of DockerHubRegistry.
-func NewDockerHubRegistry() *DockerHubRegistry {
+// NewDockerHubRegistry creates a new instance of DockerHubRegistry with an optional custom registry URL.
+func NewDockerHubRegistry(customURL string) *DockerHubRegistry {
+	if customURL == "" {
+		customURL = "https://registry-1.docker.io/v2/"
+	}
 	return &DockerHubRegistry{
-		BaseURL: "https://registry-1.docker.io/v2/",
+		BaseURL: customURL,
 	}
 }
 

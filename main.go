@@ -337,8 +337,17 @@ func run() {
 		fmt.Printf("Using locally loaded image '%s'.\n", imageName)
 	} else {
 		fmt.Printf("Fetching image '%s' from registry...\n", imageName)
-		registry := NewDockerHubRegistry()
-		image, err := Pull(registry, imageName)
+		// Extract registry URL and repository from image name
+		parts := strings.SplitN(imageName, "/", 2)
+		registryURL := "https://registry-1.docker.io/v2/" // Default to Docker Hub
+		repo := imageName
+		if len(parts) > 1 {
+			registryURL = fmt.Sprintf("http://%s/v2/", parts[0])
+			repo = parts[1]
+		}
+
+		registry := NewDockerHubRegistry(registryURL)
+		image, err := Pull(registry, repo)
 		if err != nil {
 			fmt.Printf("Error: Failed to fetch image '%s': %v\n", imageName, err)
 			os.Exit(1)

@@ -65,13 +65,15 @@ graph TD
         A1[Simulated Fetching Logic]
         A2[Basic Image Listing]
         A3[Placeholder Pull Function]
+        A4[Load Images from .tar Files]
+        A5[Run Locally Loaded Images]
+        A6[Manifest Parsing]
     end
 
     %% Intermediate Stage
     subgraph Intermediate
         B1[Registry Interface Implementation]
-        B2[Manifest Parsing]
-        B3[Layer Downloading]
+        B2[Layer Downloading]
     end
 
     %% End Goal
@@ -85,8 +87,7 @@ graph TD
     %% Connections
     A --> B1
     B1 --> B2
-    B2 --> B3
-    B3 --> C1
+    B2 --> C1
     C1 --> C2
     C2 --> C3
     C3 --> C4
@@ -98,10 +99,12 @@ graph TD
    - Simulated fetching logic is used to mimic image downloads.
    - Basic image listing functionality is implemented.
    - The `Pull` function exists as a placeholder without real registry interaction.
+   - Added support for loading images from `.tar` files.
+   - Added functionality to run locally loaded images.
+   - Manifest parsing is now part of the current stage.
 
 2. **Intermediate Stage**:
    - Introduce a `Registry` interface to abstract interactions with container registries.
-   - Implement manifest parsing to identify required layers.
    - Add functionality for downloading image layers from registries.
 
 3. **End Goal**:
@@ -109,6 +112,88 @@ graph TD
    - Verify the integrity of downloaded layers using checksums.
    - Extract layers to create a functional root filesystem for containers.
    - Achieve compatibility with real Docker workflows.
+
+## Updates: Local Registry and Tar Functionality
+
+### Local Registry Support
+We added support for pulling images from a local registry. The `run` command now parses the registry URL directly from the image name. For example:
+
+```bash
+./basic-docker run localhost:5000/alpine /bin/sh -c "echo Hello from local registry"
+```
+
+This allows users to specify images hosted on a local registry (e.g., `localhost:5000`) or any custom registry URL.
+
+### Tar File Loading
+We also implemented functionality to load images from `.tar` files. This is useful for offline environments or pre-packaged images. The `load` command can be used as follows:
+
+```bash
+./basic-docker load alpine.tar
+```
+
+After loading, the image can be verified using the `images` command:
+
+```bash
+./basic-docker images
+```
+
+The output will include the image name, size, and whether its content is verified.
+
+### Example Workflow
+1. **Load an Image from a Tar File**:
+   ```bash
+   ./basic-docker load busyboximage.tar
+   ```
+   Output:
+   ```
+   Loading image from 'busyboximage.tar'...
+   Image 'busyboximage' loaded successfully.
+   ```
+
+Create the registry
+
+ $ docker run -d -p 5000:5000 --name registry registry:2
+Unable to find image 'registry:2' locally
+2: Pulling from library/registry
+44cf07d57ee4: Pull complete 
+bbbdd6c6894b: Pull complete 
+8e82f80af0de: Pull complete 
+3493bf46cdec: Pull complete 
+6d464ea18732: Pull complete 
+Digest: sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+Status: Downloaded newer image for registry:2
+d317a23d345324b5e4dc71c33f2548244b5ed0b877b44917db605ec856bfc431
+
+$ ./basic-docker run localhost:5000/alpine /bin/sh -c "echo Hello from local registry"
+Environment detected: inContainer=true, hasNamespacePrivileges=true, hasCgroupAccess=false
+Fetching image 'localhost:5000/alpine' from registry...
+Image 'localhost:5000/alpine' fetched successfully.
+Starting container container-1745001780
+Warning: Namespace isolation is not permitted. Executing without isolation.
+Hello from local registry
+
+2. **Run an Image from a Local Registry**:
+   ```bash
+   ./basic-docker run localhost:5000/alpine /bin/sh -c "echo Hello from local registry"
+   ```
+   Output:
+   ```
+   Fetching image 'localhost:5000/alpine' from registry...
+   Image 'localhost:5000/alpine' fetched successfully.
+   Starting container container-1234567890
+   Hello from local registry
+   ```
+
+3. **List Images**:
+   ```bash
+   ./basic-docker images
+   ```
+   Output:
+   ```
+   IMAGE NAME      SIZE        CONTENT VERIFIED
+   busyboximage    4530692     Yes
+   localhost:5000/alpine   1234567     Yes
+   ```
 
 ## Alternatives Considered
 1. **Continue with Simulated Fetching**:
@@ -125,3 +210,4 @@ graph TD
 ## References
 - [Docker Image Specification](https://github.com/moby/moby/blob/master/image/spec/v1.2.md)
 - [OCI Image Format Specification](https://github.com/opencontainers/image-spec)
+
