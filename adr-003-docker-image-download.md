@@ -57,57 +57,33 @@ The following diagram illustrates the current stage of implementation and the en
 
 ```mermaid
 graph TD
-    A[Current Stage: Simulated Image Fetching] --> B[Intermediate Stage: Registry Integration]
-    B --> C[End Goal: Full Docker Image Support]
+    A[Simulated Fetching Logic]:::implemented --> B[Registry Interface Implementation]:::implemented
+    B --> C[Layer Downloading]:::inprogress
+    C --> D[Full Registry Authentication]:::notstarted
+    D --> E[Layer Verification]:::notstarted
+    E --> F[Layer Extraction]:::notstarted
+    F --> G[Root Filesystem Creation]:::notstarted
 
-    %% Current Stage
-    subgraph Current
-        A1[Simulated Fetching Logic]
-        A2[Basic Image Listing]
-        A3[Placeholder Pull Function]
-        A4[Load Images from .tar Files]
-        A5[Run Locally Loaded Images]
-        A6[Manifest Parsing]
-    end
-
-    %% Intermediate Stage
-    subgraph Intermediate
-        B1[Registry Interface Implementation]
-        B2[Layer Downloading]
-    end
-
-    %% End Goal
-    subgraph EndGoal
-        C1[Full Registry Authentication]
-        C2[Layer Verification]
-        C3[Layer Extraction]
-        C4[Root Filesystem Creation]
-    end
-
-    %% Connections
-    A --> B1
-    B1 --> B2
-    B2 --> C1
-    C1 --> C2
-    C2 --> C3
-    C3 --> C4
+    %% Styles
+    classDef implemented fill:#a8d08d,stroke:#000,stroke-width:2px;
+    classDef inprogress fill:#ffe699,stroke:#000,stroke-width:2px;
+    classDef notstarted fill:#f4cccc,stroke:#000,stroke-width:2px;
 ```
 
 ### Explanation of Stages
 
-1. **Current Stage**:
+1. **Implemented**:
    - Simulated fetching logic is used to mimic image downloads.
    - Basic image listing functionality is implemented.
    - The `Pull` function exists as a placeholder without real registry interaction.
    - Added support for loading images from `.tar` files.
    - Added functionality to run locally loaded images.
-   - Manifest parsing is now part of the current stage.
+   - Registry interface implementation for local registries is complete.
 
-2. **Intermediate Stage**:
-   - Introduce a `Registry` interface to abstract interactions with container registries.
+2. **In Progress**:
    - Add functionality for downloading image layers from registries.
 
-3. **End Goal**:
+3. **Not Started**:
    - Support full registry authentication, including private registries.
    - Verify the integrity of downloaded layers using checksums.
    - Extract layers to create a functional root filesystem for containers.
