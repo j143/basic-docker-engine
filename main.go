@@ -323,7 +323,6 @@ func printSystemInfo() {
 	fmt.Printf("  - Filesystem isolation: true\n")
 }
 
-// Update the run function to use the new Pull logic
 func run() {
 	if len(os.Args) < 3 {
 		fmt.Println("Error: Image name required for run")
@@ -331,15 +330,22 @@ func run() {
 	}
 
 	imageName := os.Args[2]
-	registry := NewDockerHubRegistry()
+	imagePath := filepath.Join(imagesDir, imageName, "rootfs")
 
-	fmt.Printf("Fetching image '%s'...\n", imageName)
-	image, err := Pull(registry, imageName)
-	if err != nil {
-		fmt.Printf("Error: Failed to fetch image '%s': %v\n", imageName, err)
-		os.Exit(1)
+	// Check if the image exists locally
+	if _, err := os.Stat(imagePath); err == nil {
+		fmt.Printf("Using locally loaded image '%s'.\n", imageName)
+	} else {
+		fmt.Printf("Fetching image '%s' from registry...\n", imageName)
+		registry := NewDockerHubRegistry()
+		image, err := Pull(registry, imageName)
+		if err != nil {
+			fmt.Printf("Error: Failed to fetch image '%s': %v\n", imageName, err)
+			os.Exit(1)
+		}
+		fmt.Printf("Image '%s' fetched successfully.\n", imageName)
+		imagePath = image.RootFS
 	}
-	fmt.Printf("Image '%s' fetched successfully.\n", imageName)
 
 	// Create rootfs for this container
 	containerID := fmt.Sprintf("container-%d", time.Now().Unix())
@@ -350,7 +356,7 @@ func run() {
 		os.Exit(1)
 	}
 
-	if err := copyDir(image.RootFS, rootfs); err != nil {
+	if err := copyDir(imagePath, rootfs); err != nil {
 		fmt.Printf("Error: Failed to copy rootfs for container '%s': %v\n", containerID, err)
 		os.Exit(1)
 	}
@@ -620,10 +626,10 @@ func saveLayerMetadata(layer ImageLayer) error {
 	// Serialize the layer metadata to JSON
 	metadataFile := filepath.Join(layersDir, layer.ID+".json")
 	file, err := os.Create(metadataFile)
+	defer file.Close()
 	if err != nil {
 		return fmt.Errorf("failed to create metadata file: %v", err)
 	}
-	defer file.Close()
 
 	encoder := json.NewEncoder(file)
 	if err := encoder.Encode(layer); err != nil {
@@ -737,7 +743,41 @@ func listContainers() {
 
 func listImages() {
 	fmt.Println("[DEBUG] listImages: Starting to list images")
-	ListImages()
+	imageDir := "/tmp/basic-docker/images"
+	fmt.Println("IMAGE NAME\tSIZE\tCONTENT VERIFIED")
+
+	if _, err := os.Stat(imageDir); os.IsNotExist(err) {
+		return
+	}
+
+	entries, err := os.ReadDir(imageDir)
+	if err != nil {
+		fmt.Printf("Error reading images: %v\n", err)
+		return
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			imageName := entry.Name()
+			rootfsPath := filepath.Join(imageDir, imageName, "rootfs")
+
+			// Check if the rootfs contains content
+			contentVerified := "No"
+			var totalSize int64 = 0
+			if files, err := os.ReadDir(rootfsPath); err == nil && len(files) > 0 {
+				contentVerified = "Yes"
+				// Calculate the total size of the rootfs
+				filepath.Walk(rootfsPath, func(_ string, info os.FileInfo, err error) error {
+					if err == nil {
+						totalSize += info.Size()
+					}
+					return nil
+				})
+			}
+
+			fmt.Printf("%s\t%d bytes\t%s\n", imageName, totalSize, contentVerified)
+		}
+	}
 	fmt.Println("[DEBUG] listImages: Finished listing images")
 }
 
