@@ -270,7 +270,23 @@ func main() {
 		err := DetachContainerFromNetwork(os.Args[2], os.Args[3])
 		if err != nil {
 			fmt.Printf("Error: %s\n", err)
+			return
 		}
+	case "load":
+		if len(os.Args) < 3 {
+			fmt.Println("Error: Tar file path required for load")
+			os.Exit(1)
+		}
+		tarFilePath := os.Args[2]
+		imageName := strings.TrimSuffix(filepath.Base(tarFilePath), ".tar")
+
+		fmt.Printf("Loading image from '%s'...\n", tarFilePath)
+		image, err := LoadImageFromTar(tarFilePath, imageName)
+		if err != nil {
+			fmt.Printf("Error: Failed to load image from '%s': %v\n", tarFilePath, err)
+			os.Exit(1)
+		}
+		fmt.Printf("Image '%s' loaded successfully.\n", image.Name)
 	default:
 		printUsage()
 		os.Exit(1)
@@ -289,6 +305,7 @@ func printUsage() {
 	fmt.Println("  basic-docker network-delete <network-id>   Delete a network by ID")
 	fmt.Println("  basic-docker network-attach <network-id> <container-id> Attach a container to a network")
 	fmt.Println("  basic-docker network-detach <network-id> <container-id> Detach a container from a network")
+	fmt.Println("  basic-docker load <tar-file-path>          Load an image from a tar file")
 }
 
 func printSystemInfo() {

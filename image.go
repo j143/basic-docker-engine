@@ -156,3 +156,29 @@ func extractLayer(reader io.Reader, rootfs string) error {
 	}
 	return nil
 }
+
+// LoadImageFromTar loads a container image from a .tar file
+func LoadImageFromTar(tarFilePath string, imageName string) (*Image, error) {
+	rootfs := filepath.Join("/tmp/basic-docker/images", imageName, "rootfs")
+	if err := os.MkdirAll(rootfs, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create rootfs: %w", err)
+	}
+
+	// Extract the tar file to the rootfs directory
+	tarFile, err := os.Open(tarFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open tar file: %w", err)
+	}
+	defer tarFile.Close()
+
+	cmd := exec.Command("tar", "-x", "-C", rootfs, "-f", tarFilePath)
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("failed to extract tar file: %w", err)
+	}
+
+	return &Image{
+		Name:   imageName,
+		RootFS: rootfs,
+		Layers: []string{"base"},
+	}, nil
+}
