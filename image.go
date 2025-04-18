@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,6 +44,55 @@ type Image struct {
 type Registry interface {
 	FetchManifest(repo, tag string) (*Manifest, error)
 	FetchLayer(repo, digest string) (io.ReadCloser, error)
+}
+
+// DockerHubRegistry is a default implementation of the Registry interface for Docker Hub.
+type DockerHubRegistry struct {
+	BaseURL string
+}
+
+// NewDockerHubRegistry creates a new instance of DockerHubRegistry.
+func NewDockerHubRegistry() *DockerHubRegistry {
+	return &DockerHubRegistry{
+		BaseURL: "https://registry-1.docker.io/v2/",
+	}
+}
+
+// FetchManifest fetches the manifest for a given repository and tag.
+func (r *DockerHubRegistry) FetchManifest(repo, tag string) (*Manifest, error) {
+	url := fmt.Sprintf("%s%s/manifests/%s", r.BaseURL, repo, tag)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch manifest: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var manifest Manifest
+	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+		return nil, fmt.Errorf("failed to decode manifest: %w", err)
+	}
+
+	return &manifest, nil
+}
+
+// FetchLayer fetches a specific layer by its digest.
+func (r *DockerHubRegistry) FetchLayer(repo, digest string) (io.ReadCloser, error) {
+	url := fmt.Sprintf("%s%s/blobs/%s", r.BaseURL, repo, digest)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch layer: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	return resp.Body, nil
 }
 
 // Manifest represents the structure of an image manifest

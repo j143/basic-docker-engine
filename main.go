@@ -306,119 +306,49 @@ func printSystemInfo() {
 	fmt.Printf("  - Filesystem isolation: true\n")
 }
 
+// Update the run function to use the new Pull logic
 func run() {
-	// Adjust the path to include the mock image directory during testing
-	if os.Getenv("TEST_ENV") == "true" {
-		os.Setenv("PATH", os.Getenv("PATH")+":"+imagesDir)
+	if len(os.Args) < 3 {
+		fmt.Println("Error: Image name required for run")
+		os.Exit(1)
 	}
 
-	// Generate a container ID
-	containerID := fmt.Sprintf("container-%d", time.Now().Unix())
-	fmt.Printf("Starting container %s\n", containerID)
-
-	// Check if the image exists before proceeding
 	imageName := os.Args[2]
-	imagePath := filepath.Join(imagesDir, imageName)
-	if _, err := os.Stat(imagePath); os.IsNotExist(err) {
-		fmt.Printf("Image '%s' not found. Fetching the image...\n", imageName)
-		if err := fetchImage(imageName); err != nil {
-			fmt.Printf("Error: Failed to fetch image '%s': %v\n", imageName, err)
-			os.Exit(1)
-		}
-		fmt.Printf("Image '%s' fetched successfully.\n", imageName)
+	registry := NewDockerHubRegistry()
+
+	fmt.Printf("Fetching image '%s'...\n", imageName)
+	image, err := Pull(registry, imageName)
+	if err != nil {
+		fmt.Printf("Error: Failed to fetch image '%s': %v\n", imageName, err)
+		os.Exit(1)
 	}
+	fmt.Printf("Image '%s' fetched successfully.\n", imageName)
 
 	// Create rootfs for this container
+	containerID := fmt.Sprintf("container-%d", time.Now().Unix())
 	rootfs := filepath.Join(baseDir, "containers", containerID, "rootfs")
 
-	// Instead of calling createMinimalRootfs directly:
-	// 1. Create a base layer if it doesn't exist
-	baseLayerID := "base-layer"
-	baseLayerPath := filepath.Join(baseDir, "layers", baseLayerID)
-
-	if _, err := os.Stat(baseLayerPath); os.IsNotExist(err) {
-		// Create the base layer
-		if err := os.MkdirAll(baseLayerPath, 0755); err != nil {
-			fmt.Printf("Error creating base layer directory: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Initialize the base layer with minimal rootfs content
-		must(initializeBaseLayer(baseLayerPath))
-
-		// Save layer metadata
-		layer := ImageLayer{
-			ID:            baseLayerID,
-			Created:       time.Now(),
-			BaseLayerPath: baseLayerPath,
-		}
-
-		if err := saveLayerMetadata(layer); err != nil {
-			fmt.Printf("Warning: Failed to save layer metadata: %v\n", err)
-		}
-	}
-
-	// Fix permission issue by ensuring correct ownership and permissions for the base layer
-	if err := os.Chmod(baseLayerPath, 0755); err != nil {
-		fmt.Printf("Error setting permissions for base layer: %v\n", err)
+	if err := os.MkdirAll(rootfs, 0755); err != nil {
+		fmt.Printf("Error: Failed to create rootfs for container '%s': %v\n", containerID, err)
 		os.Exit(1)
 	}
 
-	// 2. Create an app layer for this specific container (optional)
-	appLayerID := "app-layer-" + containerID
-	appLayerPath := filepath.Join(baseDir, "layers", appLayerID)
-
-	// Use the appLayerID variable to log its creation
-	fmt.Printf("App layer created with ID: %s\n", appLayerID)
-
-	// You could add container-specific files to the app layer here
-	// For now, we'll just use the base layer
-
-	// Save layer metadata including app layer path
-	layer := ImageLayer{
-		ID:            appLayerID,
-		Created:       time.Now(),
-		BaseLayerPath: baseLayerPath,
-		AppLayerPath:  appLayerPath,
-	}
-
-	if err := saveLayerMetadata(layer); err != nil {
-		fmt.Printf("Warning: Failed to save layer metadata: %v\n", err)
-	}
-
-	// 3. Mount the layers to create the container rootfs
-	layers := []string{baseLayerID} // Add appLayerID if you created one
-	must(mountLayeredFilesystem(layers, rootfs))
-
-	// Write the PID of the current process to a file
-	pidFile := filepath.Join(baseDir, "containers", containerID, "pid")
-	fmt.Printf("Debug: Writing PID file for container %s at %s\n", containerID, pidFile)
-	fmt.Printf("Debug: Current process PID is %d\n", os.Getpid())
-	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
-		fmt.Printf("Error: Failed to write PID file for container %s: %v\n", containerID, err)
+	if err := copyDir(image.RootFS, rootfs); err != nil {
+		fmt.Printf("Error: Failed to copy rootfs for container '%s': %v\n", containerID, err)
 		os.Exit(1)
 	}
 
-	// Fix deadlock by adding a timeout mechanism
+	fmt.Printf("Starting container %s\n", containerID)
+
+	// Execute the command in the container
 	if len(os.Args) < 4 {
-		fmt.Println("No command provided. Keeping the container process alive with a timeout.")
-		timeout := time.After(10 * time.Minute) // Set a timeout of 10 minutes
-		select {
-		case <-timeout:
-			fmt.Println("Timeout reached. Exiting container process.")
-			os.Exit(0)
-		}
+		fmt.Println("Error: Command required for run")
+		os.Exit(1)
 	}
 
-	// Update the fallback logic to avoid using unshare entirely in limited isolation
-	if hasNamespacePrivileges && !inContainer {
-		// Full isolation approach for pure Linux environments
-		runWithNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
-	} else {
-		runWithoutNamespaces(containerID, rootfs, os.Args[2], os.Args[3:])
-	}
-
-	fmt.Printf("Container %s exited\n", containerID)
+	command := os.Args[3]
+	args := os.Args[4:]
+	runWithoutNamespaces(containerID, rootfs, command, args)
 }
 
 func initializeBaseLayer(baseLayerPath string) error {
