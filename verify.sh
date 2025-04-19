@@ -80,8 +80,8 @@ docker run -d -p 5000:5000 --name registry \
 
 # Step 2: Tag and push an image to the local registry with authentication
 echo "Tagging and pushing an image to the local registry with authentication..."
+echo "password" | docker login localhost:5000 -u user --password-stdin
 docker tag alpine:latest localhost:5000/alpine
-docker login localhost:5000 -u user -p password
 docker push localhost:5000/alpine
 
 # Step 3: Verify the image in the local registry
