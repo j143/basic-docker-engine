@@ -78,11 +78,23 @@ docker run -d -p 5000:5000 --name registry \
   -e "REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd" \
   registry:2
 
-# Step 2: Tag and push an image to the local registry with authentication
-echo "Tagging and pushing an image to the local registry with authentication..."
-echo "password" | docker login localhost:5000 -u user --password-stdin
-docker tag alpine:latest localhost:5000/alpine
-docker push localhost:5000/alpine
+# Step 2: Ensure the alpine:latest image is pulled before tagging and pushing
+if ! docker pull alpine:latest; then
+    echo "Error: Failed to pull alpine:latest image." >&2
+    exit 1
+fi
+
+# Tag and push the image to the local registry with error handling
+echo "Tagging and pushing the alpine:latest image to the local registry..."
+if ! docker tag alpine:latest localhost:5000/alpine; then
+    echo "Error: Failed to tag the alpine:latest image." >&2
+    exit 1
+fi
+
+if ! docker push localhost:5000/alpine; then
+    echo "Error: Failed to push the alpine:latest image to the local registry." >&2
+    exit 1
+fi
 
 # Step 3: Verify the image in the local registry
 echo "Verifying the image in the local registry..."
