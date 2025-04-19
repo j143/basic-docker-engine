@@ -28,9 +28,33 @@ func ListImages() {
 
 	for _, entry := range entries {
 		if entry.IsDir() {
-			fmt.Printf("%s\tN/A\n", entry.Name())
+			size, err := calculateDirSize(filepath.Join(imageDir, entry.Name()))
+			if err != nil {
+				fmt.Printf("%s\tError calculating size\n", entry.Name())
+			} else {
+				fmt.Printf("%s\t%d bytes\n", entry.Name(), size)
+			}
 		}
 	}
+}
+
+// calculateDirSize calculates the total size of a directory
+func calculateDirSize(dirPath string) (int64, error) {
+	var totalSize int64
+	err := filepath.Walk(dirPath, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			totalSize += info.Size()
+		}
+		return nil
+	})
+
+	if err != nil {
+		return 0, err
+	}
+	return totalSize, nil
 }
 
 // Image represents a container image
@@ -110,6 +134,8 @@ type Manifest struct {
 
 // Pull downloads an image using the provided registry
 func Pull(registry Registry, name string) (*Image, error) {
+	fmt.Printf("[DEBUG] Starting to pull image '%s'\n", name)
+
 	// Split the image name into repository and tag
 	parts := strings.Split(name, ":")
 	repo := parts[0]
@@ -118,11 +144,14 @@ func Pull(registry Registry, name string) (*Image, error) {
 		tag = parts[1]
 	}
 
+	fmt.Printf("[DEBUG] Fetching manifest for repo '%s' and tag '%s'\n", repo, tag)
 	// Fetch the image manifest
 	manifest, err := registry.FetchManifest(repo, tag)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch manifest: %w", err)
 	}
+
+	fmt.Printf("[DEBUG] Manifest fetched successfully. Number of layers: %d\n", len(manifest.Layers))
 
 	// Download and extract layers
 	rootfs := filepath.Join("/tmp/basic-docker/images", name, "rootfs")
@@ -131,17 +160,20 @@ func Pull(registry Registry, name string) (*Image, error) {
 	}
 
 	for _, layer := range manifest.Layers {
+		fmt.Printf("[DEBUG] Downloading layer with digest '%s'\n", layer.Digest)
 		layerReader, err := registry.FetchLayer(repo, layer.Digest)
 		if err != nil {
 			return nil, fmt.Errorf("failed to download layer %s: %w", layer.Digest, err)
 		}
 		defer layerReader.Close()
 
+		fmt.Printf("[DEBUG] Extracting layer '%s'\n", layer.Digest)
 		if err := extractLayer(layerReader, rootfs); err != nil {
 			return nil, fmt.Errorf("failed to extract layer %s: %w", layer.Digest, err)
 		}
 	}
 
+	fmt.Printf("[DEBUG] Image '%s' pulled successfully. RootFS path: %s\n", name, rootfs)
 	return &Image{
 		Name:   name,
 		RootFS: rootfs,

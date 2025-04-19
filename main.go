@@ -802,12 +802,12 @@ func listImages() {
 
 			// Check if the rootfs contains content
 			contentVerified := "No"
-			var totalSize int64 = 0
+			totalSize := int64(0)
 			if files, err := os.ReadDir(rootfsPath); err == nil && len(files) > 0 {
 				contentVerified = "Yes"
 				// Calculate the total size of the rootfs
 				filepath.Walk(rootfsPath, func(_ string, info os.FileInfo, err error) error {
-					if err == nil {
+					if err == nil && !info.IsDir() {
 						totalSize += info.Size()
 					}
 					return nil
