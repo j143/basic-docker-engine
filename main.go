@@ -287,6 +287,35 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("Image '%s' loaded successfully.\n", image.Name)
+	case "image":
+		if len(os.Args) < 3 {
+			fmt.Println("Error: Subcommand required for image")
+			os.Exit(1)
+		}
+		switch os.Args[2] {
+		case "rm":
+			if len(os.Args) < 4 {
+				fmt.Println("Error: Image name required for rm")
+				os.Exit(1)
+			}
+			imageName := os.Args[3]
+			imagePath := filepath.Join(imagesDir, imageName)
+
+			if _, err := os.Stat(imagePath); os.IsNotExist(err) {
+				fmt.Printf("Error: Image '%s' does not exist.\n", imageName)
+				os.Exit(1)
+			}
+
+			if err := os.RemoveAll(imagePath); err != nil {
+				fmt.Printf("Error: Failed to delete image '%s': %v\n", imageName, err)
+				os.Exit(1)
+			}
+
+			fmt.Printf("Image '%s' deleted successfully.\n", imageName)
+		default:
+			fmt.Println("Error: Unknown subcommand for image")
+			os.Exit(1)
+		}
 	default:
 		printUsage()
 		os.Exit(1)
@@ -306,6 +335,7 @@ func printUsage() {
 	fmt.Println("  basic-docker network-attach <network-id> <container-id> Attach a container to a network")
 	fmt.Println("  basic-docker network-detach <network-id> <container-id> Detach a container from a network")
 	fmt.Println("  basic-docker load <tar-file-path>          Load an image from a tar file")
+	fmt.Println("  basic-docker image rm <image-name>         Remove an image by name")
 }
 
 func printSystemInfo() {
