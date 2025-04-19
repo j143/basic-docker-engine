@@ -84,15 +84,31 @@ if ! docker pull alpine:latest; then
     exit 1
 fi
 
-# Tag and push the image to the local registry with error handling
-echo "Tagging and pushing the alpine:latest image to the local registry..."
-if ! docker tag alpine:latest localhost:5000/alpine; then
-    echo "Error: Failed to tag the alpine:latest image." >&2
+# Use echo with --password-stdin for secure login
+echo "password" | docker login localhost:5000 -u user --password-stdin
+
+# Tag and push the image to the local registry
+docker tag alpine:latest localhost:5000/alpine
+if ! docker push localhost:5000/alpine; then
+    echo "Error: Failed to push the alpine:latest image to the local registry." >&2
+    docker logs registry >&2
     exit 1
 fi
 
-if ! docker push localhost:5000/alpine; then
-    echo "Error: Failed to push the alpine:latest image to the local registry." >&2
+# Debugging: Check if the registry is running
+if ! docker ps | grep -q registry; then
+    echo "Error: Registry container is not running." >&2
+    docker logs registry >&2
+    exit 1
+fi
+
+# Debugging: Check registry logs before pushing
+echo "Checking registry logs before pushing the image..."
+docker logs registry
+
+# Debugging: Verify registry accessibility
+if ! curl -s -u user:password -X GET http://localhost:5000/v2/ > /dev/null; then
+    echo "Error: Unable to access the registry at localhost:5000." >&2
     exit 1
 fi
 
@@ -101,16 +117,21 @@ echo "Verifying the image in the local registry..."
 catalog=$(curl -s -u user:password -X GET http://localhost:5000/v2/_catalog)
 echo "Registry catalog: $catalog"
 
-# Step 4: Use basic-docker to pull and run the image from the local registry
-echo "Using basic-docker to pull and run the image from the local registry..."
-if ./basic-docker run user:password@localhost:5000/alpine /bin/sh -c "echo Hello from authenticated local registry"; then
-    echo "basic-docker successfully pulled and ran the image."
-else
-    echo "Error: basic-docker failed to pull or run the image." >&2
+# Step 4: Use basic-docker to pull the image from the local registry
+if ! ./basic-docker pull user:password@localhost:5000/alpine; then
+    echo "Error: basic-docker failed to pull the image from the local registry." >&2
     exit 1
 fi
 
-# Step 5: Check logs for authentication
+# Step 5: Use basic-docker to run the image
+if ./basic-docker run user:password@localhost:5000/alpine /bin/sh -c "echo Hello from authenticated local registry"; then
+    echo "basic-docker successfully pulled and ran the image."
+else
+    echo "Error: basic-docker failed to run the image." >&2
+    exit 1
+fi
+
+# Step 6: Check logs for authentication
 echo "Checking logs for authentication..."
 docker logs registry | grep "user"
 
