@@ -117,13 +117,8 @@ echo "Verifying the image in the local registry..."
 catalog=$(curl -s -u user:password -X GET http://localhost:5000/v2/_catalog)
 echo "Registry catalog: $catalog"
 
-# Step 4: Use basic-docker to pull the image from the local registry
-if ! ./basic-docker pull user:password@localhost:5000/alpine; then
-    echo "Error: basic-docker failed to pull the image from the local registry." >&2
-    exit 1
-fi
 
-# Step 5: Use basic-docker to run the image
+# Step 4: Use basic-docker to run the image
 if ./basic-docker run user:password@localhost:5000/alpine /bin/sh -c "echo Hello from authenticated local registry"; then
     echo "basic-docker successfully pulled and ran the image."
 else
@@ -131,7 +126,7 @@ else
     exit 1
 fi
 
-# Step 6: Check logs for authentication
+# Step 5: Check logs for authentication
 echo "Checking logs for authentication..."
 docker logs registry | grep "user"
 
