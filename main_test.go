@@ -306,3 +306,46 @@ func BenchmarkVolumeAttachment(b *testing.B) {
 		}
 	}
 }
+
+// TestNetworkPingCLI tests the network-ping CLI command functionality
+func TestNetworkPingCLI(t *testing.T) {
+	// Cleanup: Ensure no existing networks interfere with the test
+	networks = []Network{}
+	saveNetworks()
+
+	// Setup: Create a network and attach two containers
+	networkName := "test-cli-network"
+	CreateNetwork(networkName)
+	networkID := networks[0].ID
+
+	container1 := "cli-container-1"
+	container2 := "cli-container-2"
+
+	err := AttachContainerToNetwork(networkID, container1)
+	if err != nil {
+		t.Fatalf("Failed to attach container 1: %v", err)
+	}
+
+	err = AttachContainerToNetwork(networkID, container2)
+	if err != nil {
+		t.Fatalf("Failed to attach container 2: %v", err)
+	}
+
+	// Test successful ping - this directly tests the CLI function call
+	err = Ping(networkID, container1, container2)
+	if err != nil {
+		t.Errorf("CLI ping failed for containers in same network: %v", err)
+	}
+
+	// Test ping with non-existent container
+	err = Ping(networkID, container1, "non-existent-container")
+	if err == nil {
+		t.Errorf("Expected CLI ping to fail for non-existent container, but it succeeded")
+	}
+
+	// Test ping with non-existent network
+	err = Ping("non-existent-network", container1, container2)
+	if err == nil {
+		t.Errorf("Expected CLI ping to fail for non-existent network, but it succeeded")
+	}
+}

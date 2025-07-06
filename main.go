@@ -272,6 +272,15 @@ func main() {
 			fmt.Printf("Error: %s\n", err)
 			return
 		}
+	case "network-ping":
+		if len(os.Args) < 5 {
+			fmt.Println("Usage: basic-docker network-ping <network-id> <source-container-id> <target-container-id>")
+			return
+		}
+		err := Ping(os.Args[2], os.Args[3], os.Args[4])
+		if err != nil {
+			fmt.Printf("Error: %s\n", err)
+		}
 	case "load":
 		if len(os.Args) < 3 {
 			fmt.Println("Error: Tar file path required for load")
@@ -334,6 +343,7 @@ func printUsage() {
 	fmt.Println("  basic-docker network-delete <network-id>   Delete a network by ID")
 	fmt.Println("  basic-docker network-attach <network-id> <container-id> Attach a container to a network")
 	fmt.Println("  basic-docker network-detach <network-id> <container-id> Detach a container from a network")
+	fmt.Println("  basic-docker network-ping <network-id> <source-container-id> <target-container-id> Test connectivity between containers")
 	fmt.Println("  basic-docker load <tar-file-path>          Load an image from a tar file")
 	fmt.Println("  basic-docker image rm <image-name>         Remove an image by name")
 }
