@@ -1,7 +1,7 @@
 # ADR-003: Support Real Docker Image Downloads
 
 ## Status
-Proposed
+In Progress
 
 ## Context
 The current implementation of the basic Docker engine supports a simplified mechanism for handling container images. This includes listing images and simulating image fetching. However, it does not support real Docker image downloads from container registries, which limits its functionality and compatibility with standard Docker workflows.
@@ -58,7 +58,7 @@ The following diagram illustrates the current stage of implementation and the en
 ```mermaid
 graph TD
     A[Simulated Fetching Logic]:::implemented --> B[Registry Interface Implementation]:::implemented
-    B --> C[Layer Downloading]:::inprogress
+    B --> C[Layer Downloading]:::implemented
     C --> D[Full Registry Authentication]:::notstarted
     D --> E[Layer Verification]:::notstarted
     E --> F[Layer Extraction]:::notstarted
