@@ -58,7 +58,9 @@ The following diagram illustrates the current stage of implementation and the en
 ```mermaid
 graph TD
     A[Simulated Fetching Logic]:::implemented --> B[Registry Interface Implementation]:::implemented
-    B --> C[Layer Downloading]:::implemented
+    A --> H[Load Images from .tar Files]:::implemented
+    B --> I[Local Registry Downloads]:::implemented
+    B --> C[Layer Downloading]:::inprogress
     C --> D[Full Registry Authentication]:::notstarted
     D --> E[Layer Verification]:::notstarted
     E --> F[Layer Extraction]:::notstarted
