@@ -1,7 +1,7 @@
 # ADR-003: Support Real Docker Image Downloads
 
 ## Status
-Proposed
+In Progress
 
 ## Context
 The current implementation of the basic Docker engine supports a simplified mechanism for handling container images. This includes listing images and simulating image fetching. However, it does not support real Docker image downloads from container registries, which limits its functionality and compatibility with standard Docker workflows.
