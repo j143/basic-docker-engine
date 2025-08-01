@@ -101,59 +101,162 @@ func (cm *CapsuleManager) AttachCapsule(containerID, name, version string) error
 	return nil
 }
 
-// AddResourceCapsule selectively adds a resource capsule to the environment and verifies it by interacting with a Docker container.
+// AddResourceCapsule selectively adds a resource capsule to the environment and verifies it by interacting with a Docker container or Kubernetes cluster.
 func AddResourceCapsule(env string, capsuleName string, capsuleVersion string, capsulePath string) error {
-	if env == "docker" {
-		// Docker-specific logic: Bind mount the capsule to a container
-		containerDir := filepath.Join(baseDir, "containers")
-		capsuleTargetPath := filepath.Join(containerDir, capsuleName+"-"+capsuleVersion)
-
-		// Ensure the capsule path exists
-		if _, err := os.Stat(capsulePath); os.IsNotExist(err) {
-			return fmt.Errorf("capsule path does not exist: %s", capsulePath)
-		}
-
-		// Create a symbolic link to simulate binding the capsule
-		if err := os.Symlink(capsulePath, capsuleTargetPath); err != nil {
-			return fmt.Errorf("failed to bind capsule in Docker: %v", err)
-		}
-
-		// Log interaction with Docker
-		fmt.Printf("[Docker] Capsule %s:%s added at %s\n", capsuleName, capsuleVersion, capsuleTargetPath)
-
-		// Create a temporary Docker container to verify the capsule
-		containerName := "test-container-" + capsuleName
-		cmd := exec.Command("docker", "run", "--name", containerName, "-v", capsuleTargetPath+":"+capsuleTargetPath, "busybox", "ls", capsuleTargetPath)
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("failed to verify capsule in Docker container: %v, output: %s", err, string(output))
-		}
-
-		fmt.Printf("[Docker] Verification output:\n%s\n", string(output))
-
-		 // Show docker ps output
-		psCmd := exec.Command("docker", "ps", "-a")
-		psOutput, psErr := psCmd.CombinedOutput()
-		if psErr != nil {
-			fmt.Printf("[Docker] Failed to fetch 'docker ps' output: %v\n", psErr)
-		} else {
-			fmt.Printf("[Docker] 'docker ps' output:\n%s\n", string(psOutput))
-		}
-
-		// Show docker inspect output for the container
-		inspectCmd := exec.Command("docker", "inspect", containerName)
-		inspectOutput, inspectErr := inspectCmd.CombinedOutput()
-		if inspectErr != nil {
-			fmt.Printf("[Docker] Failed to fetch 'docker inspect' output: %v\n", inspectErr)
-		} else {
-			fmt.Printf("[Docker] 'docker inspect' output:\n%s\n", string(inspectOutput))
-		}
-
-		fmt.Printf("Successfully added and verified resource capsule %s:%s in Docker environment\n", capsuleName, capsuleVersion)
-	} else {
+	switch env {
+	case "docker":
+		return addDockerResourceCapsule(capsuleName, capsuleVersion, capsulePath)
+	case "kubernetes", "k8s":
+		return addKubernetesResourceCapsule(capsuleName, capsuleVersion, capsulePath)
+	default:
 		return fmt.Errorf("unsupported environment: %s", env)
 	}
+}
+
+// addDockerResourceCapsule handles Docker-specific resource capsule logic
+func addDockerResourceCapsule(capsuleName, capsuleVersion, capsulePath string) error {
+	// Docker-specific logic: Bind mount the capsule to a container
+	containerDir := filepath.Join(baseDir, "containers")
+	capsuleTargetPath := filepath.Join(containerDir, capsuleName+"-"+capsuleVersion)
+
+	// Ensure the capsule path exists
+	if _, err := os.Stat(capsulePath); os.IsNotExist(err) {
+		return fmt.Errorf("capsule path does not exist: %s", capsulePath)
+	}
+
+	// Create a symbolic link to simulate binding the capsule
+	if err := os.Symlink(capsulePath, capsuleTargetPath); err != nil {
+		return fmt.Errorf("failed to bind capsule in Docker: %v", err)
+	}
+
+	// Log interaction with Docker
+	fmt.Printf("[Docker] Capsule %s:%s added at %s\n", capsuleName, capsuleVersion, capsuleTargetPath)
+
+	// Create a temporary Docker container to verify the capsule
+	containerName := "test-container-" + capsuleName
+	cmd := exec.Command("docker", "run", "--name", containerName, "-v", capsuleTargetPath+":"+capsuleTargetPath, "busybox", "ls", capsuleTargetPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to verify capsule in Docker container: %v, output: %s", err, string(output))
+	}
+
+	fmt.Printf("[Docker] Verification output:\n%s\n", string(output))
+
+	 // Show docker ps output
+	psCmd := exec.Command("docker", "ps", "-a")
+	psOutput, psErr := psCmd.CombinedOutput()
+	if psErr != nil {
+		fmt.Printf("[Docker] Failed to fetch 'docker ps' output: %v\n", psErr)
+	} else {
+		fmt.Printf("[Docker] 'docker ps' output:\n%s\n", string(psOutput))
+	}
+
+	// Show docker inspect output for the container
+	inspectCmd := exec.Command("docker", "inspect", containerName)
+	inspectOutput, inspectErr := inspectCmd.CombinedOutput()
+	if inspectErr != nil {
+		fmt.Printf("[Docker] Failed to fetch 'docker inspect' output: %v\n", inspectErr)
+	} else {
+		fmt.Printf("[Docker] 'docker inspect' output:\n%s\n", string(inspectOutput))
+	}
+
+	fmt.Printf("Successfully added and verified resource capsule %s:%s in Docker environment\n", capsuleName, capsuleVersion)
 	return nil
+}
+
+// addKubernetesResourceCapsule handles Kubernetes-specific resource capsule logic
+func addKubernetesResourceCapsule(capsuleName, capsuleVersion, capsulePath string) error {
+	// Create a Kubernetes capsule manager
+	kcm, err := NewKubernetesCapsuleManager("default")
+	if err != nil {
+		return fmt.Errorf("failed to create Kubernetes capsule manager: %v", err)
+	}
+
+	// Read the capsule data
+	capsuleData, err := os.ReadFile(capsulePath)
+	if err != nil {
+		return fmt.Errorf("failed to read capsule file: %v", err)
+	}
+
+	// Determine if we should create a ConfigMap or Secret based on the file content
+	// For this example, we'll create a ConfigMap if it's text data, Secret if binary
+	isTextData := isTextFile(capsuleData)
+	
+	if isTextData {
+		// Create as ConfigMap
+		data := map[string]string{
+			filepath.Base(capsulePath): string(capsuleData),
+		}
+		err = kcm.CreateConfigMapCapsule(capsuleName, capsuleVersion, data)
+		if err != nil {
+			return fmt.Errorf("failed to create ConfigMap capsule: %v", err)
+		}
+
+		// Verify the capsule was created
+		configMap, err := kcm.GetConfigMapCapsule(capsuleName, capsuleVersion)
+		if err != nil {
+			return fmt.Errorf("failed to verify ConfigMap capsule: %v", err)
+		}
+		fmt.Printf("[Kubernetes] ConfigMap capsule verified: %s (keys: %v)\n", configMap.Name, getKeys(configMap.Data))
+	} else {
+		// Create as Secret
+		data := map[string][]byte{
+			filepath.Base(capsulePath): capsuleData,
+		}
+		err = kcm.CreateSecretCapsule(capsuleName, capsuleVersion, data)
+		if err != nil {
+			return fmt.Errorf("failed to create Secret capsule: %v", err)
+		}
+
+		// Verify the capsule was created
+		secret, err := kcm.GetSecretCapsule(capsuleName, capsuleVersion)
+		if err != nil {
+			return fmt.Errorf("failed to verify Secret capsule: %v", err)
+		}
+		fmt.Printf("[Kubernetes] Secret capsule verified: %s (keys: %v)\n", secret.Name, getKeysBytes(secret.Data))
+	}
+
+	fmt.Printf("Successfully added and verified resource capsule %s:%s in Kubernetes environment\n", capsuleName, capsuleVersion)
+	return nil
+}
+
+// isTextFile determines if the data is likely text (not binary)
+func isTextFile(data []byte) bool {
+	// Simple heuristic: if first 512 bytes contain no null bytes and are mostly printable, consider it text
+	if len(data) == 0 {
+		return true
+	}
+	
+	sample := data
+	if len(data) > 512 {
+		sample = data[:512]
+	}
+	
+	for _, b := range sample {
+		if b == 0 {
+			return false // null byte suggests binary
+		}
+	}
+	
+	return true
+}
+
+// getKeys extracts keys from a string map
+func getKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// getKeysBytes extracts keys from a byte map
+func getKeysBytes(m map[string][]byte) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // To initialize the directories
@@ -325,6 +428,20 @@ func main() {
 			fmt.Println("Error: Unknown subcommand for image")
 			os.Exit(1)
 		}
+	case "k8s-capsule":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: basic-docker k8s-capsule <command>")
+			fmt.Println("Commands: create, list, get, delete")
+			os.Exit(1)
+		}
+		handleKubernetesCapsuleCommand()
+	case "capsule-benchmark":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: basic-docker capsule-benchmark <environment>")
+			fmt.Println("Environments: docker, kubernetes")
+			os.Exit(1)
+		}
+		handleCapsuleBenchmark(os.Args[2])
 	default:
 		printUsage()
 		os.Exit(1)
@@ -346,6 +463,8 @@ func printUsage() {
 	fmt.Println("  basic-docker network-ping <network-id> <source-container-id> <target-container-id> Test connectivity between containers")
 	fmt.Println("  basic-docker load <tar-file-path>          Load an image from a tar file")
 	fmt.Println("  basic-docker image rm <image-name>         Remove an image by name")
+	fmt.Println("  basic-docker k8s-capsule <command>         Manage Kubernetes Resource Capsules")
+	fmt.Println("  basic-docker capsule-benchmark <env>       Benchmark Resource Capsules (docker|kubernetes)")
 }
 
 func printSystemInfo() {
@@ -1010,4 +1129,181 @@ func fetchImage(imageName string) error {
 	time.Sleep(2 * time.Second)
 	fmt.Printf("Image '%s' fetched successfully.\n", imageName)
 	return nil
+}
+
+// handleKubernetesCapsuleCommand handles Kubernetes capsule-related CLI commands
+func handleKubernetesCapsuleCommand() {
+	if len(os.Args) < 4 {
+		fmt.Println("Usage: basic-docker k8s-capsule <command> [args...]")
+		fmt.Println("Commands:")
+		fmt.Println("  create <name> <version> <file-path>  - Create a new Resource Capsule")
+		fmt.Println("  list                                 - List all Resource Capsules")
+		fmt.Println("  get <name> <version>                 - Get a specific Resource Capsule")
+		fmt.Println("  delete <name> <version>              - Delete a Resource Capsule")
+		os.Exit(1)
+	}
+
+	command := os.Args[3]
+	
+	kcm, err := NewKubernetesCapsuleManager("default")
+	if err != nil {
+		fmt.Printf("Error: Failed to create Kubernetes client: %v\n", err)
+		fmt.Println("Make sure you have access to a Kubernetes cluster and kubectl is configured.")
+		os.Exit(1)
+	}
+
+	switch command {
+	case "create":
+		if len(os.Args) < 7 {
+			fmt.Println("Usage: basic-docker k8s-capsule create <name> <version> <file-path>")
+			os.Exit(1)
+		}
+		name := os.Args[4]
+		version := os.Args[5]
+		filePath := os.Args[6]
+		
+		err := AddResourceCapsule("kubernetes", name, version, filePath)
+		if err != nil {
+			fmt.Printf("Error: Failed to create Kubernetes capsule: %v\n", err)
+			os.Exit(1)
+		}
+		
+	case "list":
+		err := kcm.ListCapsules()
+		if err != nil {
+			fmt.Printf("Error: Failed to list capsules: %v\n", err)
+			os.Exit(1)
+		}
+		
+	case "get":
+		if len(os.Args) < 6 {
+			fmt.Println("Usage: basic-docker k8s-capsule get <name> <version>")
+			os.Exit(1)
+		}
+		name := os.Args[4]
+		version := os.Args[5]
+		
+		// Try ConfigMap first
+		configMap, err := kcm.GetConfigMapCapsule(name, version)
+		if err == nil {
+			fmt.Printf("ConfigMap Capsule: %s:%s\n", name, version)
+			fmt.Printf("Data keys: %v\n", getKeys(configMap.Data))
+			return
+		}
+		
+		// Try Secret
+		secret, err := kcm.GetSecretCapsule(name, version)
+		if err == nil {
+			fmt.Printf("Secret Capsule: %s:%s\n", name, version)
+			fmt.Printf("Data keys: %v\n", getKeysBytes(secret.Data))
+			return
+		}
+		
+		fmt.Printf("Error: Capsule %s:%s not found\n", name, version)
+		os.Exit(1)
+		
+	case "delete":
+		if len(os.Args) < 6 {
+			fmt.Println("Usage: basic-docker k8s-capsule delete <name> <version>")
+			os.Exit(1)
+		}
+		name := os.Args[4]
+		version := os.Args[5]
+		
+		err := kcm.DeleteCapsule(name, version)
+		if err != nil {
+			fmt.Printf("Error: Failed to delete capsule: %v\n", err)
+			os.Exit(1)
+		}
+		
+	default:
+		fmt.Printf("Error: Unknown command '%s'\n", command)
+		os.Exit(1)
+	}
+}
+
+// handleCapsuleBenchmark handles benchmarking commands
+func handleCapsuleBenchmark(environment string) {
+	switch environment {
+	case "docker":
+		runDockerCapsuleBenchmark()
+	case "kubernetes", "k8s":
+		runKubernetesCapsuleBenchmark()
+	default:
+		fmt.Printf("Error: Unsupported environment '%s'\n", environment)
+		fmt.Println("Supported environments: docker, kubernetes")
+		os.Exit(1)
+	}
+}
+
+// runDockerCapsuleBenchmark runs benchmarks for Docker-based Resource Capsules
+func runDockerCapsuleBenchmark() {
+	fmt.Println("=== Docker Resource Capsule Benchmark ===")
+	
+	cm := NewCapsuleManager()
+	cm.AddCapsule("benchmark-capsule", "1.0", "/tmp/benchmark-file")
+	
+	// Create a test file
+	testFile := "/tmp/benchmark-file"
+	err := os.WriteFile(testFile, []byte("benchmark data"), 0644)
+	if err != nil {
+		fmt.Printf("Error: Failed to create test file: %v\n", err)
+		return
+	}
+	defer os.Remove(testFile)
+	
+	// Benchmark capsule access
+	iterations := 10000
+	start := time.Now()
+	for i := 0; i < iterations; i++ {
+		_, exists := cm.GetCapsule("benchmark-capsule", "1.0")
+		if !exists {
+			fmt.Println("Error: Capsule not found during benchmark")
+			return
+		}
+	}
+	duration := time.Since(start)
+	
+	fmt.Printf("Docker Capsule Access: %d iterations in %v\n", iterations, duration)
+	fmt.Printf("Average per operation: %v\n", duration/time.Duration(iterations))
+}
+
+// runKubernetesCapsuleBenchmark runs benchmarks for Kubernetes-based Resource Capsules
+func runKubernetesCapsuleBenchmark() {
+	fmt.Println("=== Kubernetes Resource Capsule Benchmark ===")
+	
+	kcm, err := NewKubernetesCapsuleManager("default")
+	if err != nil {
+		fmt.Printf("Error: Failed to create Kubernetes client: %v\n", err)
+		return
+	}
+	
+	// Create a test capsule
+	testData := map[string]string{
+		"benchmark-file": "benchmark data",
+	}
+	
+	err = kcm.CreateConfigMapCapsule("benchmark-capsule", "1.0", testData)
+	if err != nil {
+		fmt.Printf("Error: Failed to create test capsule: %v\n", err)
+		return
+	}
+	
+	// Clean up after benchmark
+	defer kcm.DeleteCapsule("benchmark-capsule", "1.0")
+	
+	// Benchmark capsule access
+	iterations := 100 // Lower iterations for K8s API calls
+	start := time.Now()
+	for i := 0; i < iterations; i++ {
+		_, err := kcm.BenchmarkKubernetesResourceAccess("benchmark-capsule", "1.0")
+		if err != nil {
+			fmt.Printf("Error during benchmark iteration %d: %v\n", i, err)
+			return
+		}
+	}
+	duration := time.Since(start)
+	
+	fmt.Printf("Kubernetes Capsule Access: %d iterations in %v\n", iterations, duration)
+	fmt.Printf("Average per operation: %v\n", duration/time.Duration(iterations))
 }
