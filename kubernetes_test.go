@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -173,6 +174,126 @@ func TestAddKubernetesResourceCapsule(t *testing.T) {
 		// This is expected in test environment without real K8s cluster
 		t.Logf("Expected error in test environment: %v", err)
 	}
+}
+
+func TestAttachCapsuleToDeployment(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+
+	deployment := &appsv1.Deployment {
+		ObjectMeta: metav1.ObjectMeta {
+			Name: "test-deployment",
+			Namespace: "default",
+		},
+		Spec: appsv1.DeploymentSpec {
+			Selector: &metav1.LabelSelector {
+				MatchLabels: map[string]string {
+					"app": "test",
+				},
+			},
+			Template: v1.PodTemplateSpec {
+				ObjectMeta: metav1.ObjectMeta {
+					Labels: map[string] string {
+						"app": "test",
+					},
+				},
+				Spec: v1.PodSpec {
+					Containers: []v1.Container {
+						{
+							Name: "test-container",
+							Image: "nginx:latest",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Create the deployment in the fake clientset
+    _, err := clientset.AppsV1().Deployments("default").Create(
+        context.TODO(), 
+        deployment, 
+        metav1.CreateOptions{},
+    )
+    if err != nil {
+        t.Fatalf("Failed to create test deployment: %v", err)
+    }
+    
+    // Create a test ConfigMap capsule
+    configMap := &v1.ConfigMap{
+        ObjectMeta: metav1.ObjectMeta{
+            Name:      "test-capsule-1.0",
+            Namespace: "default",
+            Labels: map[string]string{
+                "capsule.docker.io/name":    "test-capsule",
+                "capsule.docker.io/version": "1.0",
+            },
+        },
+        Data: map[string]string{
+            "test-data": "test value",
+        },
+    }
+    
+    // Create the ConfigMap in the fake clientset
+    _, err = clientset.CoreV1().ConfigMaps("default").Create(
+        context.TODO(), 
+        configMap, 
+        metav1.CreateOptions{},
+    )
+    if err != nil {
+        t.Fatalf("Failed to create test ConfigMap: %v", err)
+    }
+    
+    // Create a KubernetesCapsuleManager with the fake clientset
+    kcm := &KubernetesCapsuleManager{
+        client:    clientset,
+        namespace: "default",
+    }
+    
+    // Attach the capsule to the deployment
+    err = kcm.AttachCapsuleToDeployment("test-deployment", "test-capsule", "1.0")
+    if err != nil {
+        t.Fatalf("Failed to attach capsule to deployment: %v", err)
+    }
+    
+    // Get the updated deployment
+    updatedDeployment, err := clientset.AppsV1().Deployments("default").Get(
+        context.TODO(), 
+        "test-deployment", 
+        metav1.GetOptions{},
+    )
+    if err != nil {
+        t.Fatalf("Failed to get updated deployment: %v", err)
+    }
+    
+    // Check that the volume was added
+    volumeFound := false
+    for _, volume := range updatedDeployment.Spec.Template.Spec.Volumes {
+        if volume.Name == "capsule-test-capsule-1.0" {
+            volumeFound = true
+            break
+        }
+    }
+    if !volumeFound {
+        t.Errorf("Volume for capsule was not added to the deployment")
+    }
+    
+    // Check that the volume mount was added to the container
+    container := &updatedDeployment.Spec.Template.Spec.Containers[0]
+    mountFound := false
+    for _, mount := range container.VolumeMounts {
+        if mount.Name == "capsule-test-capsule-1.0" {
+            mountFound = true
+            if mount.MountPath != "/capsules/test-capsule/1.0" {
+                t.Errorf("Unexpected mount path: got %s, want /capsules/test-capsule/1.0", mount.MountPath)
+            }
+            break
+        }
+    }
+    if !mountFound {
+        t.Errorf("Volume mount for capsule was not added to the container")
+    }
+    
+    t.Log("Successfully attached capsule to deployment and verified volume and mount")
 }
 
 // BenchmarkKubernetesConfigMapAccess benchmarks ConfigMap access performance
