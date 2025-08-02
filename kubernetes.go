@@ -9,6 +9,9 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -16,8 +19,9 @@ import (
 
 // KubernetesCapsuleManager handles Resource Capsules in Kubernetes environments
 type KubernetesCapsuleManager struct {
-	client    kubernetes.Interface
-	namespace string
+	client        kubernetes.Interface
+	dynamicClient dynamic.Interface
+	namespace     string
 }
 
 // NewKubernetesCapsuleManager creates a new Kubernetes-enabled capsule manager
@@ -41,13 +45,19 @@ func NewKubernetesCapsuleManager(namespace string) (*KubernetesCapsuleManager, e
 		return nil, fmt.Errorf("failed to create Kubernetes client: %v", err)
 	}
 
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic client: %v", err)
+	}
+
 	if namespace == "" {
 		namespace = "default"
 	}
 
 	return &KubernetesCapsuleManager{
-		client:    client,
-		namespace: namespace,
+		client:        client,
+		dynamicClient: dynamicClient,
+		namespace:     namespace,
 	}, nil
 }
 
@@ -310,4 +320,160 @@ func (kcm *KubernetesCapsuleManager) BenchmarkKubernetesResourceAccess(name, ver
 	}
 	
 	return 0, fmt.Errorf("capsule %s:%s not found", name, version)
+}
+
+// CRD-related functions
+
+// CreateCRDCapsule creates a ResourceCapsule custom resource
+func (kcm *KubernetesCapsuleManager) CreateCRDCapsule(name, version string, data map[string]interface{}, capsuleType string) error {
+	if capsuleType == "" {
+		capsuleType = "configmap"
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "capsules.docker.io",
+		Version:  "v1",
+		Resource: "resourcecapsules",
+	}
+
+	resourceCapsule := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "capsules.docker.io/v1",
+			"kind":       "ResourceCapsule",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": kcm.namespace,
+				"labels": map[string]interface{}{
+					"capsule.docker.io/name":    name,
+					"capsule.docker.io/version": version,
+				},
+			},
+			"spec": map[string]interface{}{
+				"data":        data,
+				"version":     version,
+				"capsuleType": capsuleType,
+				"rollback": map[string]interface{}{
+					"enabled": true,
+				},
+			},
+		},
+	}
+
+	_, err := kcm.dynamicClient.Resource(gvr).Namespace(kcm.namespace).Create(context.TODO(), resourceCapsule, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create ResourceCapsule CRD: %v", err)
+	}
+
+	fmt.Printf("[Kubernetes] ResourceCapsule CRD %s:%s created successfully\n", name, version)
+	return nil
+}
+
+// GetCRDCapsule retrieves a ResourceCapsule custom resource
+func (kcm *KubernetesCapsuleManager) GetCRDCapsule(name string) (*unstructured.Unstructured, error) {
+	gvr := schema.GroupVersionResource{
+		Group:    "capsules.docker.io",
+		Version:  "v1",
+		Resource: "resourcecapsules",
+	}
+
+	resourceCapsule, err := kcm.dynamicClient.Resource(gvr).Namespace(kcm.namespace).Get(context.TODO(), name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ResourceCapsule CRD: %v", err)
+	}
+
+	return resourceCapsule, nil
+}
+
+// ListCRDCapsules lists all ResourceCapsule custom resources
+func (kcm *KubernetesCapsuleManager) ListCRDCapsules() error {
+	gvr := schema.GroupVersionResource{
+		Group:    "capsules.docker.io",
+		Version:  "v1",
+		Resource: "resourcecapsules",
+	}
+
+	list, err := kcm.dynamicClient.Resource(gvr).Namespace(kcm.namespace).List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list ResourceCapsule CRDs: %v", err)
+	}
+
+	fmt.Printf("[Kubernetes] ResourceCapsule CRDs in namespace '%s':\n", kcm.namespace)
+	for _, item := range list.Items {
+		name := item.GetName()
+		spec, found, _ := unstructured.NestedMap(item.Object, "spec")
+		if found {
+			version, found, _ := unstructured.NestedString(spec, "version")
+			capsuleType, found2, _ := unstructured.NestedString(spec, "capsuleType")
+			if !found2 {
+				capsuleType = "configmap"
+			}
+			
+			status, statusFound, _ := unstructured.NestedMap(item.Object, "status")
+			phase := "Unknown"
+			if statusFound {
+				if p, found, _ := unstructured.NestedString(status, "phase"); found {
+					phase = p
+				}
+			}
+			
+			if found {
+				fmt.Printf("  - %s:%s (Type: %s, Status: %s)\n", name, version, capsuleType, phase)
+			} else {
+				fmt.Printf("  - %s (Type: %s, Status: %s)\n", name, capsuleType, phase)
+			}
+		}
+	}
+
+	return nil
+}
+
+// DeleteCRDCapsule deletes a ResourceCapsule custom resource
+func (kcm *KubernetesCapsuleManager) DeleteCRDCapsule(name string) error {
+	gvr := schema.GroupVersionResource{
+		Group:    "capsules.docker.io",
+		Version:  "v1",
+		Resource: "resourcecapsules",
+	}
+
+	err := kcm.dynamicClient.Resource(gvr).Namespace(kcm.namespace).Delete(context.TODO(), name, metav1.DeleteOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to delete ResourceCapsule CRD: %v", err)
+	}
+
+	fmt.Printf("[Kubernetes] ResourceCapsule CRD %s deleted successfully\n", name)
+	return nil
+}
+
+// RollbackCRDCapsule performs rollback for a ResourceCapsule
+func (kcm *KubernetesCapsuleManager) RollbackCRDCapsule(name, previousVersion string) error {
+	gvr := schema.GroupVersionResource{
+		Group:    "capsules.docker.io",
+		Version:  "v1",
+		Resource: "resourcecapsules",
+	}
+
+	// Get the current ResourceCapsule
+	resourceCapsule, err := kcm.GetCRDCapsule(name)
+	if err != nil {
+		return err
+	}
+
+	// Update the rollback configuration
+	rollback := map[string]interface{}{
+		"enabled":         true,
+		"previousVersion": previousVersion,
+	}
+
+	if err := unstructured.SetNestedMap(resourceCapsule.Object, rollback, "spec", "rollback"); err != nil {
+		return fmt.Errorf("failed to set rollback configuration: %v", err)
+	}
+
+	// Update the resource
+	_, err = kcm.dynamicClient.Resource(gvr).Namespace(kcm.namespace).Update(context.TODO(), resourceCapsule, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update ResourceCapsule for rollback: %v", err)
+	}
+
+	fmt.Printf("[Kubernetes] Rollback initiated for ResourceCapsule %s to version %s\n", name, previousVersion)
+	return nil
 }

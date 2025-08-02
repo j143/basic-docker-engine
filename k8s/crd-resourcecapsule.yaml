@@ -1,0 +1,59 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: resourcecapsules.capsules.docker.io
+spec:
+  group: capsules.docker.io
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              data:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              version:
+                type: string
+              capsuleType:
+                type: string
+                enum: ["configmap", "secret"]
+                default: "configmap"
+              rollback:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                    default: true
+                  previousVersion:
+                    type: string
+            required:
+            - data
+            - version
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                enum: ["Pending", "Active", "Failed"]
+                default: "Pending"
+              lastUpdated:
+                type: string
+                format: date-time
+              message:
+                type: string
+    subresources:
+      status: {}
+  scope: Namespaced
+  names:
+    plural: resourcecapsules
+    singular: resourcecapsule
+    kind: ResourceCapsule
+    shortNames:
+    - rcap
+    - capsule

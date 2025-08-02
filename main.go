@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 	"runtime"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // Environment detection
@@ -36,7 +37,7 @@ type ImageLayer struct {
 	AppLayerPath  string
 }
 
-// ResourceCapsule represents a self-contained, versioned resource unit.
+// ResourceCapsule represents a self-contained, versioned resource unit (legacy)
 type ResourceCapsule struct {
 	Name    string
 	Version string
@@ -435,6 +436,13 @@ func main() {
 			os.Exit(1)
 		}
 		handleKubernetesCapsuleCommand()
+	case "k8s-crd":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: basic-docker k8s-crd <command>")
+			fmt.Println("Commands: create, list, get, delete, rollback")
+			os.Exit(1)
+		}
+		handleKubernetesCRDCommand()
 	case "capsule-benchmark":
 		if len(os.Args) < 3 {
 			fmt.Println("Usage: basic-docker capsule-benchmark <environment>")
@@ -464,6 +472,7 @@ func printUsage() {
 	fmt.Println("  basic-docker load <tar-file-path>          Load an image from a tar file")
 	fmt.Println("  basic-docker image rm <image-name>         Remove an image by name")
 	fmt.Println("  basic-docker k8s-capsule <command>         Manage Kubernetes Resource Capsules")
+	fmt.Println("  basic-docker k8s-crd <command>             Manage ResourceCapsule CRDs")
 	fmt.Println("  basic-docker capsule-benchmark <env>       Benchmark Resource Capsules (docker|kubernetes)")
 }
 
@@ -1306,4 +1315,160 @@ func runKubernetesCapsuleBenchmark() {
 	
 	fmt.Printf("Kubernetes Capsule Access: %d iterations in %v\n", iterations, duration)
 	fmt.Printf("Average per operation: %v\n", duration/time.Duration(iterations))
+}
+
+// handleKubernetesCRDCommand handles ResourceCapsule CRD-related CLI commands
+func handleKubernetesCRDCommand() {
+	if len(os.Args) < 3 {
+		fmt.Println("Usage: basic-docker k8s-crd <command> [args...]")
+		fmt.Println("Commands:")
+		fmt.Println("  create <name> <version> <file-path> [type]  Create a ResourceCapsule CRD")
+		fmt.Println("  list                                        List all ResourceCapsule CRDs")
+		fmt.Println("  get <name>                                  Get ResourceCapsule CRD details")
+		fmt.Println("  delete <name>                               Delete a ResourceCapsule CRD")
+		fmt.Println("  rollback <name> <previous-version>          Rollback a ResourceCapsule CRD")
+		fmt.Println("  operator start [namespace]                  Start the ResourceCapsule operator")
+		return
+	}
+
+	kcm, err := NewKubernetesCapsuleManager("")
+	if err != nil {
+		fmt.Printf("Error creating Kubernetes capsule manager: %v\n", err)
+		return
+	}
+
+	command := os.Args[2]
+	switch command {
+	case "create":
+		if len(os.Args) < 6 {
+			fmt.Println("Usage: basic-docker k8s-crd create <name> <version> <file-path> [type]")
+			return
+		}
+		name := os.Args[3]
+		version := os.Args[4]
+		filePath := os.Args[5]
+		capsuleType := "configmap"
+		if len(os.Args) >= 7 {
+			capsuleType = os.Args[6]
+		}
+
+		// Read file content
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			fmt.Printf("Error reading file: %v\n", err)
+			return
+		}
+
+		// Convert content to data map
+		data := map[string]interface{}{
+			"content": string(content),
+		}
+
+		err = kcm.CreateCRDCapsule(name, version, data, capsuleType)
+		if err != nil {
+			fmt.Printf("Error creating ResourceCapsule CRD: %v\n", err)
+		}
+
+	case "list":
+		err := kcm.ListCRDCapsules()
+		if err != nil {
+			fmt.Printf("Error listing ResourceCapsule CRDs: %v\n", err)
+		}
+
+	case "get":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: basic-docker k8s-crd get <name>")
+			return
+		}
+		name := os.Args[3]
+
+		resourceCapsule, err := kcm.GetCRDCapsule(name)
+		if err != nil {
+			fmt.Printf("Error getting ResourceCapsule CRD: %v\n", err)
+			return
+		}
+
+		fmt.Printf("ResourceCapsule CRD: %s\n", name)
+		fmt.Printf("Namespace: %s\n", resourceCapsule.GetNamespace())
+		
+		spec, found, _ := unstructured.NestedMap(resourceCapsule.Object, "spec")
+		if found {
+			if version, found, _ := unstructured.NestedString(spec, "version"); found {
+				fmt.Printf("Version: %s\n", version)
+			}
+			if capsuleType, found, _ := unstructured.NestedString(spec, "capsuleType"); found {
+				fmt.Printf("Type: %s\n", capsuleType)
+			}
+		}
+		
+		status, found, _ := unstructured.NestedMap(resourceCapsule.Object, "status")
+		if found {
+			if phase, found, _ := unstructured.NestedString(status, "phase"); found {
+				fmt.Printf("Status: %s\n", phase)
+			}
+			if message, found, _ := unstructured.NestedString(status, "message"); found {
+				fmt.Printf("Message: %s\n", message)
+			}
+		}
+
+	case "delete":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: basic-docker k8s-crd delete <name>")
+			return
+		}
+		name := os.Args[3]
+
+		err := kcm.DeleteCRDCapsule(name)
+		if err != nil {
+			fmt.Printf("Error deleting ResourceCapsule CRD: %v\n", err)
+		}
+
+	case "rollback":
+		if len(os.Args) < 5 {
+			fmt.Println("Usage: basic-docker k8s-crd rollback <name> <previous-version>")
+			return
+		}
+		name := os.Args[3]
+		previousVersion := os.Args[4]
+
+		err := kcm.RollbackCRDCapsule(name, previousVersion)
+		if err != nil {
+			fmt.Printf("Error rolling back ResourceCapsule CRD: %v\n", err)
+		}
+
+	case "operator":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: basic-docker k8s-crd operator start [namespace]")
+			return
+		}
+		subcommand := os.Args[3]
+		if subcommand != "start" {
+			fmt.Println("Usage: basic-docker k8s-crd operator start [namespace]")
+			return
+		}
+
+		namespace := "default"
+		if len(os.Args) >= 5 {
+			namespace = os.Args[4]
+		}
+
+		operator, err := NewResourceCapsuleOperator(namespace)
+		if err != nil {
+			fmt.Printf("Error creating operator: %v\n", err)
+			return
+		}
+
+		fmt.Println("Starting ResourceCapsule operator... (Press Ctrl+C to stop)")
+		if err := operator.Start(); err != nil {
+			fmt.Printf("Error starting operator: %v\n", err)
+			return
+		}
+
+		// Keep the operator running
+		select {}
+
+	default:
+		fmt.Printf("Unknown command: %s\n", command)
+		fmt.Println("Available commands: create, list, get, delete, rollback, operator")
+	}
 }
