@@ -223,6 +223,174 @@ To ensure compatibility and practicality, Resource Capsules will be selectively 
    - Implement a Capsule Controller to manage capsule lifecycle within the cluster.
    - Integrate with Kubernetes APIs for seamless deployment and scaling.
 
+## System Architecture
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│                          Resource Capsules System                          │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────────┐  │
+│  │ Core Components │     │ Platform Drivers │     │ CLI & Management   │  │
+│  ├─────────────────┤     ├─────────────────┤     ├─────────────────────┤  │
+│  │                 │     │                 │     │                     │  │
+│  │  Capsule        │     │  Docker         │     │  CLI Interface      │  │
+│  │  ├─ Metadata    │     │  Driver         │     │                     │  │
+│  │  ├─ Content     │◄───►│                 │◄───►│  Management API     │  │
+│  │  └─ Version     │     │  Kubernetes     │     │                     │  │
+│  │                 │     │  Driver         │     │  Dependency         │  │
+│  │  Dependencies   │     │                 │     │  Resolver           │  │
+│  │                 │     │                 │     │                     │  │
+│  └─────────────────┘     └─────────────────┘     └─────────────────────┘  │
+│                                                                           │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+## Class Diagram
+
+```
+┌──────────────────────┐           ┌──────────────────────┐
+│     Capsule          │           │  CapsuleManager      │
+├──────────────────────┤           ├──────────────────────┤
+│ +name: string        │           │ +capsules: Map       │
+│ +version: string     │◄──────────┤                      │
+│ +path: string        │           │ +AddCapsule()        │
+│ +metadata: Map       │           │ +GetCapsule()        │
+└──────────────────────┘           │ +ListCapsules()      │
+                                   │ +DeleteCapsule()     │
+┌──────────────────────┐           └──────────────────────┘
+│  CapsuleDependency   │                       ▲
+├──────────────────────┤                       │
+│ +sourceName: string  │                       │
+│ +sourceVersion: string│          ┌──────────────────────────┐
+│ +targetName: string  │           │                          │
+│ +targetVersion: string│    ┌─────┤ KubernetesCapsuleManager │
+│ +isOptional: bool    │    │     │                          │
+└──────────────────────┘    │     ├──────────────────────────┤
+          ▲                 │     │ +client: k8s.Interface   │
+          │                 │     │ +namespace: string       │
+┌───────────────────────┐   │     │                          │
+│CapsuleDependencyManager│   │     │ +CreateConfigMapCapsule()│
+├───────────────────────┤   │     │ +GetConfigMapCapsule()   │
+│ +manager: CapsuleManager│  │     │ +CreateSecretCapsule()   │
+│ +dependencies: List    │◄─┘     │ +GetSecretCapsule()      │
+│                       │         │ +DeleteCapsule()         │
+│ +AddDependency()      │         │ +ListCapsules()          │
+│ +GetDependencies()    │         │ +AttachCapsuleToDeployment()│
+│ +ResolveDependencies()│         └──────────────────────────┘
+└───────────────────────┘
+```
+
+## Sequence Diagram: Attaching a Capsule to Kubernetes Deployment
+
+```
+┌────────┐          ┌────────────────┐          ┌─────────────┐          ┌────────────┐
+│ Client │          │ KCapsuleManager│          │ Kubernetes  │          │ Deployment │
+└───┬────┘          └───────┬────────┘          └──────┬──────┘          └──────┬─────┘
+    │                       │                          │                        │
+    │ AttachCapsule         │                          │                        │
+    │───────────────────────>                          │                        │
+    │                       │                          │                        │
+    │                       │ Get Deployment           │                        │
+    │                       │─────────────────────────>│                        │
+    │                       │                          │                        │
+    │                       │                          │ Get                    │
+    │                       │                          │──────────────────────> │
+    │                       │                          │                        │
+    │                       │                          │ Return Deployment      │
+    │                       │                          │<──────────────────────┐│
+    │                       │                          │                        │
+    │                       │ Return Deployment        │                        │
+    │                       │<─────────────────────────│                        │
+    │                       │                          │                        │
+    │                       │ Add Volume & Mount       │                        │
+    │                       │─┐                        │                        │
+    │                       │ │                        │                        │
+    │                       │<┘                        │                        │
+    │                       │                          │                        │
+    │                       │ Update Deployment        │                        │
+    │                       │─────────────────────────>│                        │
+    │                       │                          │                        │
+    │                       │                          │ Update                 │
+    │                       │                          │──────────────────────> │
+    │                       │                          │                        │
+    │                       │                          │ Confirmation           │
+    │                       │                          │<──────────────────────┐│
+    │                       │                          │                        │
+    │                       │ Confirmation             │                        │
+    │                       │<─────────────────────────│                        │
+    │                       │                          │                        │
+    │ Success               │                          │                        │
+    │<───────────────────────                          │                        │
+    │                       │                          │                        │
+```
+
+## Resource Access in Container
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ Container                                                           │
+│                                                                     │
+│   ┌─────────────────────┐           ┌─────────────────────────┐     │
+│   │ Application         │           │ /capsules/              │     │
+│   │                     │  access   │                         │     │
+│   │  ┌─────────────┐    │◄──────────┤ /capsules/config/1.0/   │     │
+│   │  │ Application │    │           │   ├─ config.yaml        │     │
+│   │  │ Code        │    │           │   └─ secrets.yaml       │     │
+│   │  └─────────────┘    │           │                         │     │
+│   │                     │           │ /capsules/api-keys/2.1/ │     │
+│   └─────────────────────┘           │   └─ credentials.json   │     │
+│                                     └─────────────────────────┘     │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## Kubernetes Implementation Details
+
+When a Resource Capsule is created in Kubernetes, it's represented as either a ConfigMap or Secret:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config-1.0
+  labels:
+    capsule.docker.io/name: app-config
+    capsule.docker.io/version: "1.0"
+data:
+  config.yaml: |
+    database:
+      host: db.example.com
+      port: 5432
+```
+
+When attached to a Deployment, the following changes are made:
+
+1. **A volume is added**:
+```yaml
+spec:
+  template:
+    spec:
+      volumes:
+      - name: capsule-app-config-1.0
+        configMap:
+          name: app-config-1.0
+```
+
+2. **Volume mounts are added to each container**:
+```yaml
+spec:
+  template:
+    spec:
+      containers:
+      - name: app
+        # ... other container config ...
+        volumeMounts:
+        - name: capsule-app-config-1.0
+          mountPath: /capsules/app-config/1.0
+          readOnly: true
+```
+
 #### Challenges
 - **Compatibility**: Ensuring Resource Capsules work alongside existing storage solutions.
 - **Performance**: Minimizing the performance impact of capsule management in high-load environments.
