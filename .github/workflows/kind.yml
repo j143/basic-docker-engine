@@ -22,8 +22,19 @@ jobs:
           go-version: '^1.24'
           cache: true
           
-      - name: Build
-        run: go build -v ./...
+      
+      - name: Build binary app
+        run: |
+          # Build with output path specified
+          go build -v -o basic-docker
+          
+          # Verify binary exists and is executable
+          ls -la basic-docker
+          chmod +x basic-docker
+          
+          # Move to a directory in PATH (alternative approach)
+          sudo mv basic-docker /usr/local/bin/
+          which basic-docker
         
       - name: Create kind cluster
         uses: helm/kind-action@v1.5.0
@@ -85,13 +96,17 @@ jobs:
           
       - name: Run capsule attachment tests
         run: |
-          # Run your capsule attachment command with the binary you built
-          ./basic-docker k8s-capsule create test-config 1.0 ./dummy-path
+          mkdir -p /tmp/capsules
+          echo "test-config data" > /tmp/capsules/test-config
+          
+          # Use the binary that should now be in PATH
+          basic-docker k8s-capsule create test-config 1.0 /tmp/capsules/test-config
           
           # Use kubectl exec to test if capsule is accessible in pod
           POD_NAME=$(kubectl get pods -n capsule-test -l app=test-app -o jsonpath="{.items[0].metadata.name}")
           
-          # Execute AttachCapsuleToDeployment
+          # Execute test for AttachCapsuleToDeployment
+          cd $GITHUB_WORKSPACE
           go test -v -run TestAttachCapsuleToDeployment
           
           # Verify that the deployment was updated with the capsule volume
