@@ -1,0 +1,142 @@
+name: Test Capsule Attachment with kind
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test-with-kind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '^1.24'
+          cache: true
+          
+      - name: Build
+        run: go build -v ./...
+        
+      - name: Create kind cluster
+        uses: helm/kind-action@v1.5.0
+        with:
+          cluster_name: capsule-test
+          wait: 120s
+          
+      - name: Wait for kind to be ready
+        run: |
+          kubectl cluster-info
+          kubectl wait --for=condition=Ready nodes --all --timeout=90s
+          kubectl get nodes
+          
+      - name: Create test resources
+        run: |
+          # Create test namespace
+          kubectl create namespace capsule-test
+          
+          # Create test ConfigMap capsule
+          cat <<EOF | kubectl apply -f - -n capsule-test
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: test-config-1.0
+            labels:
+              capsule.docker.io/name: test-config
+              capsule.docker.io/version: "1.0"
+          data:
+            config.yml: |
+              testKey: testValue
+              environment: test
+          EOF
+          
+          # Create test Deployment
+          cat <<EOF | kubectl apply -f - -n capsule-test
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: test-app
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: test-app
+            template:
+              metadata:
+                labels:
+                  app: test-app
+              spec:
+                containers:
+                - name: nginx
+                  image: nginx:alpine
+                  ports:
+                  - containerPort: 80
+          EOF
+          
+          # Wait for deployment to be ready
+          kubectl wait --for=condition=Available deployment/test-app -n capsule-test --timeout=60s
+          
+      - name: Run capsule attachment tests
+        run: |
+          # Run your capsule attachment command with the binary you built
+          ./basic-docker k8s-capsule create test-config 1.0 ./dummy-path
+          
+          # Use kubectl exec to test if capsule is accessible in pod
+          POD_NAME=$(kubectl get pods -n capsule-test -l app=test-app -o jsonpath="{.items[0].metadata.name}")
+          
+          # Execute AttachCapsuleToDeployment
+          go test -v -run TestAttachCapsuleToDeployment
+          
+          # Verify that the deployment was updated with the capsule volume
+          VOLUMES=$(kubectl get deployment test-app -n capsule-test -o jsonpath='{.spec.template.spec.volumes[*].name}')
+          echo "Deployment volumes: $VOLUMES"
+          
+          if [[ $VOLUMES == *"capsule-test-config-1.0"* ]]; then
+            echo "✅ Capsule volume successfully attached to deployment!"
+          else
+            echo "❌ Capsule volume not found in deployment"
+            exit 1
+          fi
+          
+          # Verify that the pod has the volume mount
+          kubectl rollout restart deployment/test-app -n capsule-test
+          kubectl rollout status deployment/test-app -n capsule-test --timeout=60s
+          
+          # Get the new pod name after restart
+          POD_NAME=$(kubectl get pods -n capsule-test -l app=test-app -o jsonpath="{.items[0].metadata.name}")
+          
+          # Verify the volume mount exists in the pod
+          MOUNTS=$(kubectl get pod $POD_NAME -n capsule-test -o jsonpath='{.spec.containers[0].volumeMounts[*].name}')
+          echo "Pod volume mounts: $MOUNTS"
+          
+          if [[ $MOUNTS == *"capsule-test-config-1.0"* ]]; then
+            echo "✅ Capsule volume mount successfully added to pod!"
+          else
+            echo "❌ Capsule volume mount not found in pod"
+            exit 1
+          fi
+          
+          # Try to access the capsule data from the pod
+          kubectl exec $POD_NAME -n capsule-test -- ls -la /capsules/test-config/1.0/
+          
+      - name: Display logs on failure
+        if: failure()
+        run: |
+          echo "==== kubectl get all ===="
+          kubectl get all -n capsule-test
+          
+          echo "==== Deployment YAML ===="
+          kubectl get deployment test-app -n capsule-test -o yaml
+          
+          echo "==== Pod logs ===="
+          POD_NAME=$(kubectl get pods -n capsule-test -l app=test-app -o jsonpath="{.items[0].metadata.name}" 2>/dev/null || echo "no-pod-found")
+          if [ "$POD_NAME" != "no-pod-found" ]; then
+            kubectl logs $POD_NAME -n capsule-test
+          fi
