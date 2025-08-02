@@ -190,88 +190,85 @@ func (kcm *KubernetesCapsuleManager) DeleteCapsule(name, version string) error {
 
 // AttachCapsuleToDeployment attaches a Resource Capsule to a Kubernetes Deployment
 func (kcm *KubernetesCapsuleManager) AttachCapsuleToDeployment(deploymentName, capsuleName, capsuleVersion string) error {
-	// This would involve updating a Deployment to mount the ConfigMap/Secret
-	// For this implementation, we'll simulate the attachment
-	fmt.Printf("[Kubernetes] Attaching capsule %s:%s to deployment %s\n", capsuleName, capsuleVersion, deploymentName)
-	kcm.client.AppsV1().Deployments(kcm.namespace).Get(context.TODO(), deploymentName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get deployment %s: %v", deploymentName, err)
-	}
-	
+    // 1. Get the existing Deployment
+    deployment, err := kcm.client.AppsV1().Deployments(kcm.namespace).Get(context.TODO(), deploymentName, metav1.GetOptions{})
+    if err != nil {
+        return fmt.Errorf("failed to get deployment %s: %v", deploymentName, err)
+    }
+
 	// does capsule exists as a ConfigMap or Secret
-	configMapName := fmt.Sprintf("%s-%s", capsuleName, capsuleVersion)
-	secretName := configMapName
-
-	configMap, configMapErr := kcm.GetConfigMapCapsule(capsuleName, capsuleVersion)
-	secret, secretErr := kcm.GetSecretCapsule(capsuleName, capsuleVersion)
-
-	var volumeName string
-	var volumeSource v1.volumeSource
-	var mountPath string
-
-	if configMapErr == nil {
-		// It's a ConfigMap capsule
-		volumeName = fmt.Sprintf("capsule-%s-%s", capsuleName, capsureVersion)
-		volumeSource = v1.VolumeSource{
-			ConfigMap: &v1.ConfigMapVolumeSource {
-				LocalObjectReference: v1.LocalObjectReference {
-					name: configMapName,
-				},
-			},
-		}
-		mountPath = fmt.Sprintf("/capsules/%s/%s", capsuleName, capsuleVersion)
-	} else if secretErr == nil {
-		// It's a Secret capsule
-		volumeName = fmt.Sprintf("capsule-%s-%s", capsuleName, capsuleVersion)
-		volumeSource = v1.VolumeSource{
-			Secret: &v1.SecretVolumeSource {
-				SecretName: secretName,
-			},
-		}
-		mountPath = fmt.Sprintf("/capsules/%s/%s", capsuleName, capsuleVersion)
-	} else {
-		return fmt.Errorf("capsule %s:%s not found", capsuleName, capsuleVersion)
-	}
-
+    configMapName := fmt.Sprintf("%s-%s", capsuleName, capsuleVersion)
+    secretName := configMapName
+    
+    // First, determine if the capsule exists as a ConfigMap or Secret
+    configMap, configMapErr := kcm.GetConfigMapCapsule(capsuleName, capsuleVersion)
+    secret, secretErr := kcm.GetSecretCapsule(capsuleName, capsuleVersion)
+    
+	// 2. Add a volume for the ConfigMap/Secret
+    var volumeName string
+    var volumeSource v1.VolumeSource
+    var mountPath string
+    
+    if configMapErr == nil {
+        // It's a ConfigMap capsule
+        volumeName = fmt.Sprintf("capsule-%s-%s", capsuleName, capsuleVersion)
+        volumeSource = v1.VolumeSource{
+            ConfigMap: &v1.ConfigMapVolumeSource{
+                LocalObjectReference: v1.LocalObjectReference{
+                    Name: configMapName,
+                },
+            },
+        }
+        mountPath = fmt.Sprintf("/capsules/%s/%s", capsuleName, capsuleVersion)
+    } else if secretErr == nil {
+        // It's a Secret capsule
+        volumeName = fmt.Sprintf("capsule-%s-%s", capsuleName, capsuleVersion)
+        volumeSource = v1.VolumeSource{
+            Secret: &v1.SecretVolumeSource{
+                SecretName: secretName,
+            },
+        }
+        mountPath = fmt.Sprintf("/capsules/%s/%s", capsuleName, capsuleVersion)
+    } else {
+        return fmt.Errorf("capsule %s:%s not found", capsuleName, capsuleVersion)
+    }
+    
 	deployment.Spec.Template.Spec.Volumes = append(
 		deployment.Spec.Template.Spec.Volumes,
-		v1.Volume {
-			Name: volumeName,
+		v1.Volume{
+			Name:         volumeName,
 			VolumeSource: volumeSource,
 		},
 	)
-
-	// In a real implementation, this would:
-	// 1. Get the existing Deployment
-	// 2. Add a volume for the ConfigMap/Secret
+    
+    
 	// 3. Add a volumeMount to the container spec
-	for i := range deployment.Spec.Template.Spec.Containers {
-		container := & deployment.Spec.Template.Spec.Containers[i]
-
+    for i := range deployment.Spec.Template.Spec.Containers {
+        container := &deployment.Spec.Template.Spec.Containers[i]
+        
 		// check if this container already has the mount
 		for _, mount := range cotainer.VolumeMounts {
-			if mount.Name == volumeName {
-				mountExists = true
-				break
-			}
-		}
-
-	}
-
-	// 4. Update the Deployment
-	kcm.client.AppsV1().Deployments(kcm.namespace).Update(
-		context.TODO(),
-		deployment,
-		metav1.UpdateOptions{},
-	)
-	if err != nil {
-		fmt.Errorf("failed to update deployment %s: %v", deploymentName, err)
-	}
-
-	fmt.Printf("[Kubernetes] Capsule %s:%s attached to deployment %s at path %s\n",
-		capsuleName, capsuleVersion, deploymentName, mountPath)
-	
-	return nil
+            if mount.Name == volumeName {
+                mountExists = true
+                break
+            }
+        }
+        
+    }
+    
+    //4. Update the deployment
+    _, err = kcm.client.AppsV1().Deployments(kcm.namespace).Update(
+        context.TODO(), 
+        deployment, 
+        metav1.UpdateOptions{},
+    )
+    if err != nil {
+        return fmt.Errorf("failed to update deployment %s: %v", deploymentName, err)
+    }
+    
+    fmt.Printf("[Kubernetes] Capsule %s:%s attached to deployment %s at path %s\n", 
+        capsuleName, capsuleVersion, deploymentName, mountPath)
+    return nil
 }
 
 // BenchmarkKubernetesResourceAccess benchmarks access to Kubernetes resources
