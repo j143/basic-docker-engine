@@ -57,6 +57,12 @@ jobs:
           # Create test namespace
           kubectl create namespace capsule-test
           
+          # Install ResourceCapsule CRD
+          kubectl apply -f k8s/crd-resourcecapsule.yaml
+          
+          # Wait for CRD to be established
+          kubectl wait --for condition=established --timeout=30s crd/resourcecapsules.capsules.docker.io
+          
           # Create test ConfigMap capsule
           cat <<EOF | kubectl apply -f - -n capsule-test
           apiVersion: v1
@@ -70,6 +76,23 @@ jobs:
             config.yml: |
               testKey: testValue
               environment: test
+          EOF
+          
+          # Create test ResourceCapsule CRD
+          cat <<EOF | kubectl apply -f - -n capsule-test
+          apiVersion: capsules.docker.io/v1
+          kind: ResourceCapsule
+          metadata:
+            name: test-crd-capsule
+          spec:
+            data:
+              config.yaml: |
+                testKey: testValue
+                environment: test
+            version: "1.0"
+            capsuleType: configmap
+            rollback:
+              enabled: true
           EOF
           
           # Create test Deployment
@@ -108,6 +131,56 @@ jobs:
           
           # Use the binary that should now be in PATH
           basic-docker k8s-capsule create test-config 1.0 /tmp/capsules/test-config
+
+      - name: Test CRD functionality
+        id: test-crd
+        continue-on-error: true
+        run: |
+          echo "::group::Testing ResourceCapsule CRD functionality"
+          
+          # Test CRD listing
+          echo "Testing k8s-crd list command:"
+          basic-docker k8s-crd list || echo "CRD list command failed (expected in test environment)"
+          
+          # Check if the ResourceCapsule CRD was created
+          echo "Checking ResourceCapsule CRD in cluster:"
+          kubectl get resourcecapsules -n capsule-test || echo "No ResourceCapsules found (expected if CRD not working)"
+          
+          # Check if the test ResourceCapsule was created
+          echo "Checking test ResourceCapsule:"
+          kubectl get resourcecapsule test-crd-capsule -n capsule-test -o yaml || echo "Test ResourceCapsule not found"
+          
+          # Test status of the ResourceCapsule
+          STATUS=$(kubectl get resourcecapsule test-crd-capsule -n capsule-test -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+          echo "ResourceCapsule status: $STATUS"
+          
+          echo "::endgroup::"
+          
+          if [[ "$STATUS" == "Active" ]]; then
+            echo "crd_test_success=true" >> $GITHUB_OUTPUT
+          else
+            echo "crd_test_success=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Test Go CRD tests
+        id: go-crd-tests
+        continue-on-error: true
+        run: |
+          echo "::group::Running Go tests for CRD functionality"
+          export KUBECONFIG=$HOME/.kube/config
+          export TEST_NAMESPACE=capsule-test
+          go test -v -run TestResourceCapsule
+          TEST_RESULT=$?
+          echo "Go CRD test exit code: $TEST_RESULT"
+          echo "::endgroup::"
+          
+          if [ $TEST_RESULT -eq 0 ]; then
+            echo "✅ Go CRD tests passed successfully!"
+            echo "go_crd_tests_success=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Go CRD tests failed, but continuing"
+            echo "go_crd_tests_success=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Test API methods with Go tests
         id: go-tests

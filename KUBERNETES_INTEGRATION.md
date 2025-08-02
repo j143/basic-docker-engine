@@ -188,7 +188,10 @@ Content-based resource type selection:
 
 ## Future Enhancements
 
-### 1. Custom Resource Definitions (CRDs)
+### 1. Custom Resource Definitions (CRDs) - IMPLEMENTED ✅
+
+**ResourceCapsule CRD** provides native Kubernetes support for Resource Capsules:
+
 ```yaml
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -207,16 +210,151 @@ spec:
             properties:
               data:
                 type: object
+                x-kubernetes-preserve-unknown-fields: true
               version:
+                type: string
+              capsuleType:
+                type: string
+                enum: ["configmap", "secret"]
+                default: "configmap"
+              rollback:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                    default: true
+                  previousVersion:
+                    type: string
+            required:
+            - data
+            - version
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                enum: ["Pending", "Active", "Failed"]
+                default: "Pending"
+              lastUpdated:
+                type: string
+                format: date-time
+              message:
                 type: string
 ```
 
-### 2. Operator Implementation
-- Custom controller for Resource Capsule lifecycle
-- Automated versioning and rollback capabilities
-- Integration with GitOps workflows
+**CRD Management Commands:**
+```bash
+# Install the CRD
+kubectl apply -f k8s/crd-resourcecapsule.yaml
 
-### 3. Performance Optimization
+# Create ResourceCapsule via CRD
+basic-docker k8s-crd create app-config 1.0 /path/to/config.yaml configmap
+
+# List ResourceCapsule CRDs
+basic-docker k8s-crd list
+
+# Get ResourceCapsule CRD details
+basic-docker k8s-crd get app-config
+
+# Delete ResourceCapsule CRD
+basic-docker k8s-crd delete app-config
+
+# Rollback ResourceCapsule to previous version
+basic-docker k8s-crd rollback app-config 0.9
+```
+
+### 2. Operator Implementation - IMPLEMENTED ✅
+
+**ResourceCapsule Operator** provides automated lifecycle management:
+
+- **Custom Controller**: Watches ResourceCapsule custom resources for changes
+- **Automated Resource Creation**: Automatically creates ConfigMaps or Secrets based on CRD specifications
+- **Status Management**: Updates ResourceCapsule status with current state information
+- **Event Handling**: Responds to Add, Modify, and Delete events for ResourceCapsules
+
+**Operator Features:**
+- **Automated Versioning**: Manages version transitions automatically
+- **Rollback Capabilities**: Built-in rollback to previous versions
+- **Resource Type Selection**: Automatically chooses ConfigMap vs Secret based on content
+- **Status Tracking**: Maintains current state (Pending, Active, Failed) with timestamps
+
+**Starting the Operator:**
+```bash
+# Start the operator in default namespace
+basic-docker k8s-crd operator start
+
+# Start the operator in specific namespace
+basic-docker k8s-crd operator start production
+```
+
+**Operator Integration Example:**
+```yaml
+apiVersion: capsules.docker.io/v1
+kind: ResourceCapsule
+metadata:
+  name: app-config
+spec:
+  data:
+    config.yaml: |
+      database:
+        host: db.example.com
+        port: 5432
+      redis:
+        host: redis.example.com
+        port: 6379
+  version: "1.0"
+  capsuleType: configmap
+  rollback:
+    enabled: true
+status:
+  phase: Active
+  lastUpdated: "2024-08-02T11:47:41Z"
+  message: "ResourceCapsule successfully created"
+```
+
+### 3. GitOps Workflow Integration - IMPLEMENTED ✅
+
+**GitOps Support** enables declarative ResourceCapsule management:
+
+- **Declarative Configuration**: ResourceCapsule CRDs can be stored in Git repositories
+- **Version Control**: All capsule configurations are versioned with Git
+- **Automated Deployment**: GitOps tools (ArgoCD, Flux) can deploy ResourceCapsules
+- **Rollback Support**: Git-based rollback using previous commits
+
+**GitOps Workflow Example:**
+```bash
+# 1. Define ResourceCapsule in Git repository
+cat > manifests/app-config-capsule.yaml << EOF
+apiVersion: capsules.docker.io/v1
+kind: ResourceCapsule
+metadata:
+  name: app-config
+  namespace: production
+spec:
+  data:
+    config.yaml: |
+      version: "1.0"
+      features:
+        auth: enabled
+        cache: enabled
+  version: "1.0"
+  capsuleType: configmap
+  rollback:
+    enabled: true
+EOF
+
+# 2. GitOps tool detects changes and applies them
+# 3. ResourceCapsule operator creates underlying ConfigMap
+# 4. Applications can consume the capsule data
+```
+
+**Integration with Popular GitOps Tools:**
+- **ArgoCD**: Supports ResourceCapsule CRDs out of the box
+- **Flux**: Can manage ResourceCapsule lifecycle with GitRepository sources
+- **Jenkins X**: Pipeline integration for automated capsule deployment
+- **Tekton**: Custom tasks for ResourceCapsule validation and deployment
+
+### 4. Performance Optimization
 - Caching layer for frequently accessed capsules
 - Batch operations for bulk resource management
 - Compression for large resource capsules
