@@ -12,7 +12,7 @@ mkdir -p "$IMAGES_DIR"
 
 # Build the basic-docker binary with error handling
 echo "==== Building Project ===="
-if ! go build -o basic-docker main.go network.go image.go; then
+if ! go build -o basic-docker main.go network.go image.go kubernetes.go; then
     echo "Error: Build failed. Please check the errors above." >&2
     exit 1
 fi
