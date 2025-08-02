@@ -233,14 +233,24 @@ func (kcm *KubernetesCapsuleManager) AttachCapsuleToDeployment(deploymentName, c
         return fmt.Errorf("capsule %s:%s not found", capsuleName, capsuleVersion)
     }
     
-	deployment.Spec.Template.Spec.Volumes = append(
-		deployment.Spec.Template.Spec.Volumes,
-		v1.Volume{
-			Name:         volumeName,
-			VolumeSource: volumeSource,
-		},
-	)
+    volumeExists := false
+    for _, volume := range deployment.Spec.Template.Spec.Volumes {
+        if volume.Name == volumeName {
+            volumeExists = true
+            break
+        }
+    }
     
+    // Add the volume if it doesn't exist
+    if !volumeExists {
+        deployment.Spec.Template.Spec.Volumes = append(
+            deployment.Spec.Template.Spec.Volumes,
+            v1.Volume{
+                Name:         volumeName,
+                VolumeSource: volumeSource,
+            },
+        )
+    }
     
 	// 3. Add a volumeMount to the container spec
     for i := range deployment.Spec.Template.Spec.Containers {
@@ -253,6 +263,17 @@ func (kcm *KubernetesCapsuleManager) AttachCapsuleToDeployment(deploymentName, c
                 mountExists = true
                 break
             }
+        }
+
+		if !mountExists {
+            container.VolumeMounts = append(
+                container.VolumeMounts,
+                v1.VolumeMount{
+                    Name:      volumeName,
+                    MountPath: mountPath,
+                    ReadOnly:  true,
+                },
+            )
         }
         
     }
