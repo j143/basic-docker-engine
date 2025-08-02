@@ -258,27 +258,27 @@ To ensure compatibility and practicality, Resource Capsules will be selectively 
 │ +metadata: Map       │           │ +GetCapsule()        │
 └──────────────────────┘           │ +ListCapsules()      │
                                    │ +DeleteCapsule()     │
-┌──────────────────────┐           └──────────────────────┘
-│  CapsuleDependency   │                       ▲
-├──────────────────────┤                       │
-│ +sourceName: string  │                       │
-│ +sourceVersion: string│          ┌──────────────────────────┐
-│ +targetName: string  │           │                          │
-│ +targetVersion: string│    ┌─────┤ KubernetesCapsuleManager │
-│ +isOptional: bool    │    │     │                          │
-└──────────────────────┘    │     ├──────────────────────────┤
-          ▲                 │     │ +client: k8s.Interface   │
-          │                 │     │ +namespace: string       │
-┌───────────────────────┐   │     │                          │
-│CapsuleDependencyManager│   │     │ +CreateConfigMapCapsule()│
-├───────────────────────┤   │     │ +GetConfigMapCapsule()   │
-│ +manager: CapsuleManager│  │     │ +CreateSecretCapsule()   │
-│ +dependencies: List    │◄─┘     │ +GetSecretCapsule()      │
-│                       │         │ +DeleteCapsule()         │
-│ +AddDependency()      │         │ +ListCapsules()          │
-│ +GetDependencies()    │         │ +AttachCapsuleToDeployment()│
-│ +ResolveDependencies()│         └──────────────────────────┘
-└───────────────────────┘
+┌────────────────────────┐         └──────────────────────┘
+│  CapsuleDependency     │                     ▲
+├────────────────────────┤                     │
+│ +sourceName: string    │                     │
+│ +sourceVersion: string │         ┌─────────────────────────────┐
+│ +targetName: string    │         │                             │
+│ +targetVersion: string │   ┌─────┤ KubernetesCapsuleManager    │
+│ +isOptional: bool      │   │     │                             │
+└────────────────────────┘   │     ├─────────────────────────────┤
+          ▲                  │     │ +client: k8s.Interface      │
+          │                  │     │ +namespace: string          │
+┌─────────────────────────┐  │     │                             │
+│CapsuleDependencyManager │  │     │ +CreateConfigMapCapsule()   │
+├─────────────────────────┤  │     │ +GetConfigMapCapsule()      │
+│ +manager: CapsuleManager│  │     │ +CreateSecretCapsule()      │
+│ +dependencies: List     │◄─┘     │ +GetSecretCapsule()         │
+│                         │        │ +DeleteCapsule()            │
+│ +AddDependency()        │        │ +ListCapsules()             │
+│ +GetDependencies()      │        │ +AttachCapsuleToDeployment()│
+│ +ResolveDependencies()  │        └─────────────────────────────┘
+└─────────────────────────┘
 ```
 
 ## Sequence Diagram: Attaching a Capsule to Kubernetes Deployment
@@ -404,7 +404,8 @@ spec:
 
 
 ## Status
-In Review
+April 12, 2025 - Planned
+August 2, 2025 - Implementation with Kubernetes done
 
 ## Date
 April 12, 2025
