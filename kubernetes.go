@@ -247,6 +247,7 @@ func (kcm *KubernetesCapsuleManager) AttachCapsuleToDeployment(deploymentName, c
         container := &deployment.Spec.Template.Spec.Containers[i]
         
 		// check if this container already has the mount
+		mountExists := false
 		for _, mount := range cotainer.VolumeMounts {
             if mount.Name == volumeName {
                 mountExists = true
