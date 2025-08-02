@@ -201,8 +201,8 @@ func (kcm *KubernetesCapsuleManager) AttachCapsuleToDeployment(deploymentName, c
     secretName := configMapName
     
     // First, determine if the capsule exists as a ConfigMap or Secret
-    configMap, configMapErr := kcm.GetConfigMapCapsule(capsuleName, capsuleVersion)
-    secret, secretErr := kcm.GetSecretCapsule(capsuleName, capsuleVersion)
+    _, configMapErr := kcm.GetConfigMapCapsule(capsuleName, capsuleVersion)
+    _, secretErr := kcm.GetSecretCapsule(capsuleName, capsuleVersion)
     
 	// 2. Add a volume for the ConfigMap/Secret
     var volumeName string
@@ -258,7 +258,7 @@ func (kcm *KubernetesCapsuleManager) AttachCapsuleToDeployment(deploymentName, c
         
 		// check if this container already has the mount
 		mountExists := false
-		for _, mount := range cotainer.VolumeMounts {
+		for _, mount := range container.VolumeMounts {
             if mount.Name == volumeName {
                 mountExists = true
                 break

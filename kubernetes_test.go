@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -197,8 +198,10 @@ func TestAttachCapsuleToDeployment(t *testing.T) {
 				},
 				Spec: v1.PodSpec {
 					Containers: []v1.Container {
-						Name: "test-container",
-						Image: "nginx:latest",
+						{
+							Name: "test-container",
+							Image: "nginx:latest",
+						},
 					},
 				},
 			},
