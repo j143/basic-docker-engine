@@ -44,7 +44,7 @@ jobs:
     - name: Build project with error handling
       run: |
         echo "==== Building Project ===="
-        if ! go build -o basic-docker main.go network.go image.go kubernetes.go; then
+        if ! go build -o basic-docker .; then
             echo "Error: Build failed. Please check the errors above." >&2
             exit 1
         fi
