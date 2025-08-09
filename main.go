@@ -450,6 +450,13 @@ func main() {
 			os.Exit(1)
 		}
 		handleCapsuleBenchmark(os.Args[2])
+	case "monitor":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: basic-docker monitor <command>")
+			fmt.Println("Commands: process, container, host, all, gap")
+			os.Exit(1)
+		}
+		handleMonitoringCommand()
 	default:
 		printUsage()
 		os.Exit(1)
@@ -474,6 +481,7 @@ func printUsage() {
 	fmt.Println("  basic-docker k8s-capsule <command>         Manage Kubernetes Resource Capsules")
 	fmt.Println("  basic-docker k8s-crd <command>             Manage ResourceCapsule CRDs")
 	fmt.Println("  basic-docker capsule-benchmark <env>       Benchmark Resource Capsules (docker|kubernetes)")
+	fmt.Println("  basic-docker monitor <command>             Monitor system across process, container, and host levels")
 }
 
 func printSystemInfo() {
@@ -1470,5 +1478,253 @@ func handleKubernetesCRDCommand() {
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
 		fmt.Println("Available commands: create, list, get, delete, rollback, operator")
+	}
+}
+
+// handleMonitoringCommand handles monitoring-related CLI commands
+func handleMonitoringCommand() {
+	if len(os.Args) < 3 {
+		fmt.Println("Usage: basic-docker monitor <command> [args...]")
+		fmt.Println("Commands:")
+		fmt.Println("  process <pid>               Monitor a specific process by PID")
+		fmt.Println("  container <container-id>    Monitor a specific container")
+		fmt.Println("  host                        Monitor host-level metrics")
+		fmt.Println("  all                         Monitor all levels (process, container, host)")
+		fmt.Println("  gap                         Analyze monitoring gaps between levels")
+		fmt.Println("  correlation <container-id>  Show correlation between monitoring levels")
+		return
+	}
+
+	command := os.Args[2]
+	switch command {
+	case "process":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: basic-docker monitor process <pid>")
+			return
+		}
+		pid, err := strconv.Atoi(os.Args[3])
+		if err != nil {
+			fmt.Printf("Error: Invalid PID '%s': %v\n", os.Args[3], err)
+			return
+		}
+		
+		pm := NewProcessMonitor(pid)
+		metrics, err := pm.GetMetrics()
+		if err != nil {
+			fmt.Printf("Error getting process metrics: %v\n", err)
+			return
+		}
+		
+		jsonData, err := json.MarshalIndent(metrics, "", "  ")
+		if err != nil {
+			fmt.Printf("Error formatting metrics: %v\n", err)
+			return
+		}
+		
+		fmt.Printf("Process Metrics (PID %d):\n", pid)
+		fmt.Println(string(jsonData))
+
+	case "container":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: basic-docker monitor container <container-id>")
+			return
+		}
+		containerID := os.Args[3]
+		
+		cm := NewContainerMonitor(containerID)
+		metrics, err := cm.GetMetrics()
+		if err != nil {
+			fmt.Printf("Error getting container metrics: %v\n", err)
+			return
+		}
+		
+		jsonData, err := json.MarshalIndent(metrics, "", "  ")
+		if err != nil {
+			fmt.Printf("Error formatting metrics: %v\n", err)
+			return
+		}
+		
+		fmt.Printf("Container Metrics (%s):\n", containerID)
+		fmt.Println(string(jsonData))
+
+	case "host":
+		hm := NewHostMonitor()
+		metrics, err := hm.GetMetrics()
+		if err != nil {
+			fmt.Printf("Error getting host metrics: %v\n", err)
+			return
+		}
+		
+		jsonData, err := json.MarshalIndent(metrics, "", "  ")
+		if err != nil {
+			fmt.Printf("Error formatting metrics: %v\n", err)
+			return
+		}
+		
+		fmt.Println("Host Metrics:")
+		fmt.Println(string(jsonData))
+
+	case "all":
+		aggregator := NewMonitoringAggregator()
+		aggregator.AddMonitor(NewHostMonitor())
+		
+		// Add container monitors for all existing containers
+		containerDir := filepath.Join(baseDir, "containers")
+		if entries, err := os.ReadDir(containerDir); err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() {
+					aggregator.AddMonitor(NewContainerMonitor(entry.Name()))
+				}
+			}
+		}
+		
+		metricsStr, err := aggregator.GetFormattedMetrics()
+		if err != nil {
+			fmt.Printf("Error getting aggregated metrics: %v\n", err)
+			return
+		}
+		
+		fmt.Println("Complete System Monitoring (All Levels):")
+		fmt.Println(metricsStr)
+
+	case "gap":
+		// Perform gap analysis
+		aggregator := NewMonitoringAggregator()
+		aggregator.AddMonitor(NewHostMonitor())
+		
+		// Add container monitors
+		containerDir := filepath.Join(baseDir, "containers")
+		if entries, err := os.ReadDir(containerDir); err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() {
+					aggregator.AddMonitor(NewContainerMonitor(entry.Name()))
+				}
+			}
+		}
+		
+		metrics, err := aggregator.GetAllMetrics()
+		if err != nil {
+			fmt.Printf("Error getting metrics for gap analysis: %v\n", err)
+			return
+		}
+		
+		gap := AnalyzeMonitoringGap(metrics)
+		gapData, err := json.MarshalIndent(gap, "", "  ")
+		if err != nil {
+			fmt.Printf("Error formatting gap analysis: %v\n", err)
+			return
+		}
+		
+		fmt.Println("Monitoring Gap Analysis:")
+		fmt.Println("========================")
+		fmt.Println("This analysis identifies gaps in monitoring coverage between")
+		fmt.Println("process, container, and host levels as described in the Docker")
+		fmt.Println("monitoring problem (https://www.datadoghq.com/blog/the-docker-monitoring-problem/)")
+		fmt.Println()
+		fmt.Println(string(gapData))
+
+	case "correlation":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: basic-docker monitor correlation <container-id>")
+			return
+		}
+		containerID := os.Args[3]
+		
+		showMonitoringCorrelation(containerID)
+
+	default:
+		fmt.Printf("Unknown monitoring command: %s\n", command)
+		fmt.Println("Available commands: process, container, host, all, gap, correlation")
+	}
+}
+
+// showMonitoringCorrelation shows the correlation between different monitoring levels
+func showMonitoringCorrelation(containerID string) {
+	fmt.Printf("Monitoring Correlation Analysis for Container: %s\n", containerID)
+	fmt.Println("=" + strings.Repeat("=", len(containerID)+41))
+	fmt.Println()
+	
+	// Get container metrics
+	cm := NewContainerMonitor(containerID)
+	containerMetrics, err := cm.GetMetrics()
+	if err != nil {
+		fmt.Printf("Error getting container metrics: %v\n", err)
+		return
+	}
+	
+	// Get host metrics
+	hm := NewHostMonitor()
+	hostMetrics, err := hm.GetMetrics()
+	if err != nil {
+		fmt.Printf("Error getting host metrics: %v\n", err)
+		return
+	}
+	
+	// Display correlation table as per problem statement
+	fmt.Println("Level Correlation Table (Based on Docker Monitoring Problem):")
+	fmt.Println("-------------------------------------------------------------")
+	fmt.Printf("%-15s | %-20s | %-20s | %-20s\n", "Aspect", "Process", "Container", "Host")
+	fmt.Println(strings.Repeat("-", 80))
+	
+	if cMetrics, ok := containerMetrics.(ContainerMetrics); ok {
+		if hMetrics, ok := hostMetrics.(HostMetrics); ok {
+			// Spec line
+			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n", 
+				"Spec", "Source", "Dockerfile", "Kickstart")
+			
+			// On disk line
+			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n", 
+				"On disk", ".TEXT", cMetrics.DockerPath, "/")
+			
+			// In memory line
+			processInfo := "N/A"
+			if len(cMetrics.Processes) > 0 {
+				processInfo = fmt.Sprintf("PID %d", cMetrics.Processes[0].PID)
+			}
+			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n", 
+				"In memory", processInfo, cMetrics.ContainerID, hMetrics.Hostname)
+			
+			// In network line
+			networkInfo := "Socket"
+			if len(cMetrics.Processes) > 0 {
+				networkInfo = cMetrics.Processes[0].Socket
+			}
+			vethInfo := "veth*"
+			if len(cMetrics.VethInterfaces) > 0 {
+				vethInfo = cMetrics.VethInterfaces[0]
+			}
+			ethInfo := "eth*"
+			if len(hMetrics.NetworkInterfaces) > 0 {
+				ethInfo = hMetrics.NetworkInterfaces[0].Name
+			}
+			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n", 
+				"In network", networkInfo, vethInfo, ethInfo)
+			
+			// Runtime context line
+			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n", 
+				"Runtime context", "server core", "host", hMetrics.RuntimeContext)
+			
+			// Isolation line
+			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n", 
+				"Isolation", "moderate", "private OS view", "full")
+		}
+	}
+	
+	fmt.Println()
+	fmt.Println("Detailed Metrics:")
+	fmt.Println("-----------------")
+	
+	// Container details
+	containerData, _ := json.MarshalIndent(containerMetrics, "", "  ")
+	fmt.Printf("Container Metrics:\n%s\n\n", string(containerData))
+	
+	// Host summary (subset of metrics)
+	if hMetrics, ok := hostMetrics.(HostMetrics); ok {
+		fmt.Printf("Host Summary:\n")
+		fmt.Printf("  Hostname: %s\n", hMetrics.Hostname)
+		fmt.Printf("  Memory: %d/%d bytes used\n", hMetrics.MemoryUsed, hMetrics.MemoryTotal)
+		fmt.Printf("  Load Average: %v\n", hMetrics.LoadAverage)
+		fmt.Printf("  Network Interfaces: %d\n", len(hMetrics.NetworkInterfaces))
+		fmt.Printf("  Total Containers: %d\n", len(hMetrics.Containers))
 	}
 }
