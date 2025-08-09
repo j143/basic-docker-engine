@@ -202,6 +202,51 @@ This diagram provides an overview of the key classes and functions in the projec
 
 ## Basic docker prompts
 
+### Docker Monitoring System
+
+The basic-docker engine now includes comprehensive monitoring capabilities that address the "Docker monitoring problem" by providing visibility across process, container, and host isolation levels.
+
+#### Monitor Commands
+
+```bash
+# Monitor host-level metrics
+./basic-docker monitor host
+
+# Monitor specific process
+./basic-docker monitor process <PID>
+
+# Monitor specific container
+./basic-docker monitor container <container-id>
+
+# Monitor all levels (process, container, host)
+./basic-docker monitor all
+
+# Analyze monitoring gaps between isolation levels  
+./basic-docker monitor gap
+
+# Show correlation between monitoring levels
+./basic-docker monitor correlation <container-id>
+```
+
+#### Example Output
+
+```bash
+./basic-docker monitor correlation container-1234
+```
+
+Shows the correlation table as described in the Docker monitoring problem:
+
+| Aspect | Process | Container | Host |
+|--------|---------|-----------|------|
+| Spec | Source | Dockerfile | Kickstart |
+| On disk | .TEXT | /var/lib/docker | / |
+| In memory | PID | Container ID | Hostname |
+| In network | Socket | veth* | eth* |
+| Runtime context | server core | host | data center |
+| Isolation | moderate | private OS view | full |
+
+See [MONITORING.md](MONITORING.md) for detailed documentation.
+
 ### `basic-docker info`
 
 ```bash
