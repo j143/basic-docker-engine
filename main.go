@@ -22,6 +22,8 @@ var (
 	hasNamespacePrivileges = false
 	// Set to true if we have cgroup access
 	hasCgroupAccess = false
+	// Cgroup information
+	cgroupInfo CgroupInfo
 )
 
 var baseDir = filepath.Join(os.TempDir(), "basic-docker")
@@ -302,20 +304,12 @@ func init() {
 	cmd := exec.Command("unshare", "--user", "echo", "test")
 	hasNamespacePrivileges = cmd.Run() == nil
 
-	// Test cgroup access
-	cgroupPath := "/sys/fs/cgroup/memory"
-	_, err := os.Stat(cgroupPath)
-	hasCgroupAccess = err == nil
-	if hasCgroupAccess {
-		// Try to create a test cgroup
-		testPath := filepath.Join(cgroupPath, "basic-docker-test")
-		hasCgroupAccess = os.MkdirAll(testPath, 0755) == nil
-		// Clean up test path
-		os.Remove(testPath)
-	}
+	// Detect cgroup version and capabilities
+	cgroupInfo = DetectCgroupVersion()
+	hasCgroupAccess = cgroupInfo.Available
 
-	fmt.Printf("Environment detected: inContainer=%v, hasNamespacePrivileges=%v, hasCgroupAccess=%v\n",
-		inContainer, hasNamespacePrivileges, hasCgroupAccess)
+	fmt.Printf("Environment detected: inContainer=%v, hasNamespacePrivileges=%v, hasCgroupAccess=%v, cgroupVersion=%d\n",
+		inContainer, hasNamespacePrivileges, hasCgroupAccess, cgroupInfo.Version)
 
 	if err := initDirectories(); err != nil {
 		fmt.Printf("Warning: Failed to intialize directories: %v \n", err)
@@ -337,6 +331,24 @@ func main() {
 		run()
 	case "ps":
 		listContainers()
+	case "rm":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: basic-docker rm <container-id>")
+			os.Exit(1)
+		}
+		removeContainer(os.Args[2])
+	case "logs":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: basic-docker logs <container-id>")
+			os.Exit(1)
+		}
+		showLogs(os.Args[2])
+	case "inspect":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: basic-docker inspect <container-id>")
+			os.Exit(1)
+		}
+		inspectContainer(os.Args[2])
 	case "images":
 		listImages()
 	case "info":
@@ -467,6 +479,9 @@ func printUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  basic-docker run <command> [args...]  - Run a command in a container")
 	fmt.Println("  basic-docker ps                       - List running containers")
+	fmt.Println("  basic-docker rm <container-id>        - Remove a stopped container")
+	fmt.Println("  basic-docker logs <container-id>      - Show logs from a container")
+	fmt.Println("  basic-docker inspect <container-id>   - Display detailed container information")
 	fmt.Println("  basic-docker images                   - List available images")
 	fmt.Println("  basic-docker info                     - Show system information")
 	fmt.Println("  basic-docker exec <container-id> <command> [args...] - Execute a command in a running container")
@@ -482,6 +497,7 @@ func printUsage() {
 	fmt.Println("  basic-docker k8s-crd <command>             Manage ResourceCapsule CRDs")
 	fmt.Println("  basic-docker capsule-benchmark <env>       Benchmark Resource Capsules (docker|kubernetes)")
 	fmt.Println("  basic-docker monitor <command>             Monitor system across process, container, and host levels")
+	fmt.Println("\nUse 'basic-docker <command> --help' for more information about a command.")
 }
 
 func printSystemInfo() {
@@ -492,10 +508,29 @@ func printSystemInfo() {
 	fmt.Printf("Running in container: %v\n", inContainer)
 	fmt.Printf("Namespace privileges: %v\n", hasNamespacePrivileges)
 	fmt.Printf("Cgroup access: %v\n", hasCgroupAccess)
+	
+	// Display cgroup details
+	if cgroupInfo.Available {
+		cgroupVersionStr := "unknown"
+		switch cgroupInfo.Version {
+		case CgroupV1:
+			cgroupVersionStr = "v1"
+		case CgroupV2:
+			cgroupVersionStr = "v2"
+		}
+		fmt.Printf("Cgroup version: %s\n", cgroupVersionStr)
+		fmt.Printf("Cgroup base path: %s\n", cgroupInfo.BasePath)
+		fmt.Printf("Memory controller: %v\n", cgroupInfo.MemorySupported)
+		fmt.Printf("CPU controller: %v\n", cgroupInfo.CPUSupported)
+	} else if cgroupInfo.ErrorMessage != "" {
+		fmt.Printf("Cgroup error: %s\n", cgroupInfo.ErrorMessage)
+	}
+	
 	fmt.Println("Available features:")
 	fmt.Printf("  - Process isolation: %v\n", hasNamespacePrivileges)
 	fmt.Printf("  - Network isolation: %v\n", hasNamespacePrivileges)
-	fmt.Printf("  - Resource limits: %v\n", hasCgroupAccess)
+	fmt.Printf("  - Resource limits (memory): %v\n", cgroupInfo.MemorySupported)
+	fmt.Printf("  - Resource limits (CPU): %v\n", cgroupInfo.CPUSupported)
 	fmt.Printf("  - Filesystem isolation: true\n")
 }
 
@@ -546,6 +581,31 @@ func run() {
 		os.Exit(1)
 	}
 
+	// Create container metadata
+	createdAt := time.Now()
+	command := ""
+	args := []string{}
+	if len(os.Args) >= 4 {
+		command = os.Args[3]
+		args = os.Args[4:]
+	}
+
+	metadata := ContainerMetadata{
+		ID:         containerID,
+		State:      StateCreated,
+		Image:      imageName,
+		Command:    command,
+		Args:       args,
+		CreatedAt:  createdAt,
+		RootfsPath: rootfs,
+	}
+
+	// Save initial state
+	if err := SaveContainerState(metadata); err != nil {
+		fmt.Printf("Error: Failed to save container state: %v\n", err)
+		os.Exit(1)
+	}
+
 	fmt.Printf("Starting container %s\n", containerID)
 
 	// Execute the command in the container
@@ -554,8 +614,6 @@ func run() {
 		os.Exit(1)
 	}
 
-	command := os.Args[3]
-	args := os.Args[4:]
 	runWithoutNamespaces(containerID, rootfs, command, args)
 }
 
@@ -698,14 +756,69 @@ func runWithNamespaces(containerID, rootfs, command string, args []string) {
 // Reintroduce runWithoutNamespaces for simplicity and modularity
 func runWithoutNamespaces(containerID, rootfs, command string, args []string) {
 	fmt.Println("Warning: Namespace isolation is not permitted. Executing without isolation.")
+	
+	// Update state to running
+	startedAt := time.Now()
+	UpdateContainerState(containerID, func(m *ContainerMetadata) {
+		m.State = StateRunning
+		m.StartedAt = &startedAt
+		m.PID = os.Getpid()
+	})
+	
+	// Set up cgroups if available
+	if hasCgroupAccess {
+		if err := SetupCgroupsWithDetection(containerID, 100*1024*1024); err != nil {
+			fmt.Printf("Warning: Failed to setup cgroups: %v\n", err)
+		}
+	}
+	
+	// Set up log file
+	logFile := filepath.Join(baseDir, "containers", containerID, "stdout.log")
+	logFd, err := os.Create(logFile)
+	if err != nil {
+		fmt.Printf("Warning: Failed to create log file: %v\n", err)
+	} else {
+		defer logFd.Close()
+	}
+	
 	cmd := exec.Command(command, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+	
+	// Also write to log file if available
+	if logFd != nil {
+		cmd.Stdout = logFd
+		cmd.Stderr = logFd
 	}
+	
+	err = cmd.Run()
+	
+	// Update state to exited or failed
+	finishedAt := time.Now()
+	exitCode := 0
+	state := StateExited
+	errorMsg := ""
+	
+	if err != nil {
+		state = StateFailed
+		errorMsg = err.Error()
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1
+		}
+		fmt.Printf("Error: %v\n", err)
+	}
+	
+	UpdateContainerState(containerID, func(m *ContainerMetadata) {
+		m.State = state
+		m.FinishedAt = &finishedAt
+		m.ExitCode = &exitCode
+		if errorMsg != "" {
+			m.Error = errorMsg
+		}
+	})
 }
 
 func createMinimalRootfs(rootfs string) error {
@@ -847,37 +960,8 @@ func mountLayeredFilesystem(layers []string, rootfs string) error {
 }
 
 func setupCgroups(containerID string, memoryLimit int) error {
-	// Skip if no cgroup access
-	if !hasCgroupAccess {
-		return nil
-	}
-
-	// Create cgroup
-	cgroupPath := fmt.Sprintf("/sys/fs/cgroup/memory/basic-docker/%s", containerID)
-	if err := os.MkdirAll(cgroupPath, 0755); err != nil {
-		return fmt.Errorf("failed to create cgroup: %v", err)
-	}
-
-	// Set memory limit
-	if err := os.WriteFile(
-		fmt.Sprintf("%s/memory.limit_in_bytes", cgroupPath),
-		[]byte(fmt.Sprintf("%d", memoryLimit)),
-		0644,
-	); err != nil {
-		return fmt.Errorf("failed to set memory limit: %v", err)
-	}
-
-	// Add current process to cgroup
-	pid := os.Getpid()
-	if err := os.WriteFile(
-		fmt.Sprintf("%s/cgroup.procs", cgroupPath),
-		[]byte(fmt.Sprintf("%d", pid)),
-		0644,
-	); err != nil {
-		return fmt.Errorf("failed to add process to cgroup: %v", err)
-	}
-
-	return nil
+	// Use the new cgroup detection system
+	return SetupCgroupsWithDetection(containerID, int64(memoryLimit))
 }
 
 func getContainerStatus(containerID string) string {
@@ -904,25 +988,20 @@ func getContainerStatus(containerID string) string {
 }
 
 func listContainers() {
-	containerDir := filepath.Join(baseDir, "containers")
-	fmt.Println("CONTAINER ID\tSTATUS\tCOMMAND")
-
-	if _, err := os.Stat(containerDir); os.IsNotExist(err) {
-		return
-	}
-
-	entries, err := os.ReadDir(containerDir)
+	containers, err := ListAllContainers()
 	if err != nil {
 		fmt.Printf("Error reading containers: %v\n", err)
 		return
 	}
 
-	for _, entry := range entries {
-		if entry.IsDir() {
-			containerID := entry.Name()
-			status := getContainerStatus(containerID)
-			fmt.Printf("%s\t%s\tN/A\n", containerID, status)
+	fmt.Println("CONTAINER ID\tSTATE\t\tCOMMAND\t\tCREATED")
+	for _, container := range containers {
+		created := container.CreatedAt.Format("2006-01-02 15:04:05")
+		command := container.Command
+		if command == "" {
+			command = "N/A"
 		}
+		fmt.Printf("%s\t%s\t%s\t%s\n", container.ID, container.State, command, created)
 	}
 }
 
@@ -1727,4 +1806,46 @@ func showMonitoringCorrelation(containerID string) {
 		fmt.Printf("  Network Interfaces: %d\n", len(hMetrics.NetworkInterfaces))
 		fmt.Printf("  Total Containers: %d\n", len(hMetrics.Containers))
 	}
+}
+
+// removeContainer removes a stopped container
+func removeContainer(containerID string) {
+	if err := RemoveContainer(containerID); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Container %s removed successfully\n", containerID)
+}
+
+// showLogs displays container logs
+func showLogs(containerID string) {
+	logs, err := GetContainerLogs(containerID)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+	
+	if logs == "" {
+		fmt.Println("No logs available for this container")
+		return
+	}
+	
+	fmt.Print(logs)
+}
+
+// inspectContainer displays detailed container information
+func inspectContainer(containerID string) {
+	metadata, err := LoadContainerState(containerID)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+	
+	data, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		fmt.Printf("Error formatting container data: %v\n", err)
+		os.Exit(1)
+	}
+	
+	fmt.Println(string(data))
 }
