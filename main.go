@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -581,15 +582,18 @@ func run() {
 		os.Exit(1)
 	}
 
-	// Create container metadata
-	createdAt := time.Now()
-	command := ""
-	args := []string{}
-	if len(os.Args) >= 4 {
-		command = os.Args[3]
-		args = os.Args[4:]
+	// Execute the command in the container
+	if len(os.Args) < 4 {
+		fmt.Println("Error: Command required for run")
+		os.Exit(1)
 	}
 
+	// Extract command and args once
+	command := os.Args[3]
+	args := os.Args[4:]
+
+	// Create container metadata
+	createdAt := time.Now()
 	metadata := ContainerMetadata{
 		ID:         containerID,
 		State:      StateCreated,
@@ -607,12 +611,6 @@ func run() {
 	}
 
 	fmt.Printf("Starting container %s\n", containerID)
-
-	// Execute the command in the container
-	if len(os.Args) < 4 {
-		fmt.Println("Error: Command required for run")
-		os.Exit(1)
-	}
 
 	runWithoutNamespaces(containerID, rootfs, command, args)
 }
@@ -783,13 +781,14 @@ func runWithoutNamespaces(containerID, rootfs, command string, args []string) {
 	
 	cmd := exec.Command(command, args...)
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 	
-	// Also write to log file if available
+	// Use MultiWriter to send output to both console and log file
 	if logFd != nil {
-		cmd.Stdout = logFd
-		cmd.Stderr = logFd
+		cmd.Stdout = io.MultiWriter(os.Stdout, logFd)
+		cmd.Stderr = io.MultiWriter(os.Stderr, logFd)
+	} else {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
 	}
 	
 	err = cmd.Run()

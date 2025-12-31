@@ -95,15 +95,16 @@ func SetupCgroupsV2(containerID string, memoryLimit int64) error {
 	
 	// Try to enable memory controller
 	if err := os.WriteFile(parentControl, []byte("+memory"), 0644); err != nil {
-		// It's OK if this fails - may not have permission
-		// Continue without memory limits
+		// Log warning but continue - cgroup limits may not be available
+		fmt.Printf("Warning: Cannot enable memory controller in cgroup v2 (degraded mode): %v\n", err)
 		return nil
 	}
 
 	// Set memory limit if supported
 	memoryMaxFile := filepath.Join(cgroupPath, "memory.max")
 	if err := os.WriteFile(memoryMaxFile, []byte(strconv.FormatInt(memoryLimit, 10)), 0644); err != nil {
-		// Not fatal - just means we can't set limits
+		// Log warning - limits won't be enforced but container can still run
+		fmt.Printf("Warning: Cannot set memory limit in cgroup v2 (degraded mode): %v\n", err)
 		return nil
 	}
 
@@ -129,7 +130,8 @@ func SetupCgroupsV1(containerID string, memoryLimit int64) error {
 	// Set memory limit
 	memoryLimitFile := filepath.Join(cgroupPath, "memory.limit_in_bytes")
 	if err := os.WriteFile(memoryLimitFile, []byte(strconv.FormatInt(memoryLimit, 10)), 0644); err != nil {
-		// Not fatal - just means we can't set limits
+		// Log warning - limits won't be enforced but container can still run
+		fmt.Printf("Warning: Cannot set memory limit in cgroup v1 (degraded mode): %v\n", err)
 		return nil
 	}
 
