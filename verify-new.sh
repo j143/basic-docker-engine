@@ -83,10 +83,42 @@ fi
 section "Test 2: Creating Test Image"
 info "Setting up test image with basic binaries"
 TEST_IMAGE_DIR="/tmp/basic-docker/images/test-image/rootfs"
-mkdir -p "$TEST_IMAGE_DIR/bin"
-cp /bin/echo "$TEST_IMAGE_DIR/bin/" 2>/dev/null || cp /usr/bin/echo "$TEST_IMAGE_DIR/bin/"
-cp /bin/sh "$TEST_IMAGE_DIR/bin/" 2>/dev/null || cp /usr/bin/sh "$TEST_IMAGE_DIR/bin/" || cp /bin/bash "$TEST_IMAGE_DIR/bin/sh"
-success "Test image created"
+sudo mkdir -p "$TEST_IMAGE_DIR/bin"
+
+# Try to copy echo binary
+if [ -f /bin/echo ]; then
+    sudo cp /bin/echo "$TEST_IMAGE_DIR/bin/"
+elif [ -f /usr/bin/echo ]; then
+    sudo cp /usr/bin/echo "$TEST_IMAGE_DIR/bin/"
+else
+    error "Could not find echo binary"
+    exit 1
+fi
+
+# Try to copy shell binary
+if [ -f /bin/sh ]; then
+    sudo cp /bin/sh "$TEST_IMAGE_DIR/bin/"
+elif [ -f /usr/bin/sh ]; then
+    sudo cp /usr/bin/sh "$TEST_IMAGE_DIR/bin/"
+elif [ -f /bin/bash ]; then
+    sudo cp /bin/bash "$TEST_IMAGE_DIR/bin/sh"
+else
+    error "Could not find shell binary"
+    exit 1
+fi
+
+# Verify binaries are actually present
+if [ ! -f "$TEST_IMAGE_DIR/bin/echo" ]; then
+    error "Failed to copy echo binary to test image"
+    exit 1
+fi
+
+if [ ! -f "$TEST_IMAGE_DIR/bin/sh" ]; then
+    error "Failed to copy shell binary to test image"
+    exit 1
+fi
+
+success "Test image created with required binaries"
 
 # Test 3: Container Lifecycle - Run and State Tracking
 section "Test 3: Container Lifecycle - Run Command"
