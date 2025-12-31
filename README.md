@@ -1,21 +1,74 @@
 # basic-docker-engine
 
-Basic docker engine implementation from scratch
+A minimal, educational Docker-like container runtime implementation from scratch, focused on demonstrating container internals, monitoring capabilities, and Kubernetes integration.
 
+## Project Scope
+
+This is a **teaching/runtime prototype** designed for:
+- Understanding container isolation mechanisms
+- Demonstrating the Docker monitoring problem
+- Exploring Kubernetes custom resource integration
+- Learning container runtime internals
+
+**Not intended for production use.** This is a reference implementation for education and research.
+
+## Core Features
+
+### Container Runtime
+- Container lifecycle management with state tracking (`created`, `running`, `exited`, `failed`)
+- Automatic cgroup v1/v2 detection and graceful degradation
+- Filesystem isolation with layered image support
+- Process and network namespace isolation (when available)
+- Container logs and metadata persistence
+
+### System Monitoring
+- Multi-level monitoring (process, container, host)
+- Gap analysis between isolation levels
+- Correlation tracking across monitoring layers
+- See [MONITORING.md](MONITORING.md) for details
+
+### Kubernetes Integration
+- ResourceCapsule CRD for enhanced resource modeling
+- Operator for CRD reconciliation
+- GitOps-compatible resource management
+- See [KUBERNETES_INTEGRATION.md](KUBERNETES_INTEGRATION.md) for details
+
+## Prerequisites
+
+- Linux system (tested on Ubuntu 20.04+)
+- Go 1.24+ for building
+- Root privileges for namespace operations
+- Optional: Kubernetes cluster for CRD features
 
 ## Build steps
 
 ### build go code
 
-```basic
-@j143 ➜ /workspaces/basic-docker-engine (main) $ go build -o basic-docker main.go 
-@j143 ➜ /workspaces/basic-docker-engine (main) $ ./basic-docker 
-Environment detected: inContainer=true, hasNamespacePrivileges=true, hasCgroupAccess=false
-Usage:
-  basic-docker run <command> [args...]  - Run a command in a container
-  basic-docker ps                       - List running containers
-  basic-docker images                   - List available images
-  basic-docker info                     - Show system information
+```bash
+go build -o basic-docker .
+./basic-docker info
+```
+
+Expected output:
+```
+Environment detected: inContainer=false, hasNamespacePrivileges=true, hasCgroupAccess=true, cgroupVersion=2
+Lean Docker Engine - System Information
+=======================================
+Go version: go1.24.11
+OS/Arch: linux/amd64
+Running in container: false
+Namespace privileges: true
+Cgroup access: true
+Cgroup version: v2
+Cgroup base path: /sys/fs/cgroup
+Memory controller: true
+CPU controller: true
+Available features:
+  - Process isolation: true
+  - Network isolation: true
+  - Resource limits (memory): true
+  - Resource limits (CPU): true
+  - Filesystem isolation: true
 ```
 
 ### create necessary folders
@@ -30,20 +83,83 @@ sudo mkdir -p /sys/fs/cgroup/memory/basic-docker
 
 ```bash
 sudo chmod -R 755 /tmp/basic-docker
-sudo chmod -R 755 /sys/fs/cgroup/memory/basic-docker
 ```
 
-### Run a simple command in a container
+## Usage
 
-> Note: This needs to be run as root due to namespace operations
+### Basic Container Operations
 
-sudo ./basic-docker run /bin/sh -c "echo Hello from container"
+#### Run a container
+```bash
+# Run a simple command
+sudo ./basic-docker run test-image /bin/echo "Hello from container"
 
+# Run an interactive shell (requires image with /bin/sh)
+sudo ./basic-docker run test-image /bin/sh
+```
 
->  $ sudo ./basic-docker run /bin/sh -c "echo Hello from container"
-> Starting container container-1743306338
-> Error: failed to set memory limit: open /sys/fs/cgroup/memory/basic-docker/container-1743306338/memory.limit_in_bytes: permission denied
->
+#### List containers
+```bash
+# Shows all containers with their states
+sudo ./basic-docker ps
+```
+
+Example output:
+```
+CONTAINER ID         STATE     COMMAND        CREATED
+container-1767175530 exited    /bin/echo      2025-12-31 10:05:30
+container-1767175600 running   /bin/sleep     2025-12-31 10:06:00
+```
+
+#### Inspect a container
+```bash
+# Get detailed container information in JSON format
+sudo ./basic-docker inspect <container-id>
+```
+
+Example output:
+```json
+{
+  "id": "container-1767175530",
+  "state": "exited",
+  "image": "test-image",
+  "command": "/bin/echo",
+  "args": ["Hello from container"],
+  "created_at": "2025-12-31T10:05:30Z",
+  "started_at": "2025-12-31T10:05:30Z",
+  "finished_at": "2025-12-31T10:05:30Z",
+  "exit_code": 0,
+  "pid": 7505,
+  "rootfs_path": "/tmp/basic-docker/containers/container-1767175530/rootfs"
+}
+```
+
+#### View container logs
+```bash
+# Display stdout/stderr from a container
+sudo ./basic-docker logs <container-id>
+```
+
+#### Remove a stopped container
+```bash
+# Clean up container directories and resources
+sudo ./basic-docker rm <container-id>
+```
+
+**Note:** Cannot remove running containers. Stop them first.
+
+### System Information
+
+```bash
+# Display system capabilities and cgroup information
+./basic-docker info
+```
+
+This command shows:
+- Cgroup version (v1 or v2) and availability
+- Memory and CPU controller support
+- Namespace privileges
+- Available isolation features
 
 ## Architecture
 
@@ -133,6 +249,67 @@ flowchart TB
     class FULL,LIMITED,FALLBACK tertiary
     class DETECT,PRIV,CGROUP highlight
 ```
+
+## Container Lifecycle & State Management
+
+Containers follow a well-defined state model:
+
+```
+created → running → exited
+                  ↓
+               failed
+```
+
+### States
+
+- **created**: Container directory structure created, metadata initialized
+- **running**: Container process is executing
+- **exited**: Container completed successfully (exit code 0)
+- **failed**: Container terminated with error (non-zero exit code)
+
+### State Persistence
+
+Container state is stored in `/tmp/basic-docker/containers/<id>/state.json`:
+
+```json
+{
+  "id": "container-123",
+  "state": "exited",
+  "image": "alpine",
+  "command": "/bin/echo",
+  "args": ["hello"],
+  "created_at": "2025-12-31T10:00:00Z",
+  "started_at": "2025-12-31T10:00:01Z",
+  "finished_at": "2025-12-31T10:00:02Z",
+  "exit_code": 0,
+  "pid": 12345,
+  "rootfs_path": "/tmp/basic-docker/containers/container-123/rootfs"
+}
+```
+
+## Cgroup Support & Resource Limits
+
+The runtime automatically detects and adapts to the available cgroup version:
+
+### Cgroup v2 (Unified Hierarchy)
+- Detected via `/sys/fs/cgroup/cgroup.controllers`
+- Uses `memory.max` for memory limits
+- Controllers enabled via `cgroup.subtree_control`
+
+### Cgroup v1 (Legacy)
+- Detected via `/sys/fs/cgroup/memory` subsystem
+- Uses `memory.limit_in_bytes` for memory limits
+- Separate hierarchy per resource type
+
+### Graceful Degradation
+
+When cgroup access is not available or permissions are insufficient:
+- Container still runs without resource limits
+- Warning logged but execution continues
+- `info` command shows cgroup availability status
+- No fatal errors from missing cgroup support
+
+This ensures the runtime works in various environments (containers, VMs, bare metal) without requiring cgroup permissions.
 
 ## Image Build Logic
 
