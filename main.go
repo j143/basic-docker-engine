@@ -625,7 +625,7 @@ func resolveRegistry(imageName string) (string, string) {
 }
 
 func registryURLForHost(host string) string {
-	if host == "localhost" || strings.HasPrefix(host, "localhost:") || host == "[::1]" || host == "::1" || strings.HasPrefix(host, "127.") {
+	if host == "localhost" || strings.HasPrefix(host, "localhost:") || host == "[::1]" || strings.HasPrefix(host, "127.") {
 		return fmt.Sprintf("http://%s/v2/", host)
 	}
 	return fmt.Sprintf("https://%s/v2/", host)
