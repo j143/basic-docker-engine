@@ -33,6 +33,9 @@ This is a **teaching/runtime prototype** designed for:
 - GitOps-compatible resource management
 - See [KUBERNETES_INTEGRATION.md](KUBERNETES_INTEGRATION.md) for details
 
+### Debugging Exercises
+- Practice fixing realistic bugs from this codebase in [BUG_EXERCISES.md](BUG_EXERCISES.md)
+
 ## Prerequisites
 
 - Linux system (tested on Ubuntu 20.04+)
