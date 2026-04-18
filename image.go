@@ -59,9 +59,9 @@ func calculateDirSize(dirPath string) (int64, error) {
 
 // Image represents a container image
 type Image struct {
-	Name    string
-	RootFS  string
-	Layers  []string
+	Name   string
+	RootFS string
+	Layers []string
 }
 
 // Registry represents a generic interface for interacting with container registries
@@ -70,7 +70,7 @@ type Registry interface {
 	FetchLayer(repo, digest string) (io.ReadCloser, error)
 }
 
-// DockerHubRegistry is a default implementation of the Registry interface for Docker Hub or custom registries.
+// DockerHubRegistry is a default implementation of the Registry interface for GHCR or custom registries.
 type DockerHubRegistry struct {
 	BaseURL string
 }
@@ -78,7 +78,7 @@ type DockerHubRegistry struct {
 // NewDockerHubRegistry creates a new instance of DockerHubRegistry with an optional custom registry URL.
 func NewDockerHubRegistry(customURL string) *DockerHubRegistry {
 	if customURL == "" {
-		customURL = "https://registry-1.docker.io/v2/"
+		customURL = "https://ghcr.io/v2/"
 	}
 	return &DockerHubRegistry{
 		BaseURL: customURL,
