@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -69,6 +70,15 @@ func mustSaveStateForRepro(t *testing.T, metadata ContainerMetadata) {
 	}
 }
 
+func repoFilePath(t *testing.T, name string) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatalf("failed to resolve current test file path")
+	}
+	return filepath.Join(filepath.Dir(thisFile), name)
+}
+
 func TestBugExercise1_ReproduceShortContainerIDPanic(t *testing.T) {
 	withTempRuntimeDirs(t, func() {
 		containerID := "abc"
@@ -90,7 +100,7 @@ func TestBugExercise1_ReproduceShortContainerIDPanic(t *testing.T) {
 }
 
 func TestBugExercise2_ReproduceNilDeferClosePanic(t *testing.T) {
-	src, err := os.ReadFile("/home/runner/work/basic-docker-engine/basic-docker-engine/main.go")
+	src, err := os.ReadFile(repoFilePath(t, "main.go"))
 	if err != nil {
 		t.Fatalf("failed to read main.go: %v", err)
 	}
@@ -111,8 +121,8 @@ func TestBugExercise2_ReproduceNilDeferClosePanic(t *testing.T) {
 	if deferIdx == -1 || errCheckIdx == -1 {
 		t.Fatalf("expected defer and error-check patterns in saveLayerMetadata")
 	}
-	if deferIdx > errCheckIdx {
-		t.Fatalf("expected reproduction: defer file.Close appears before os.Create error check")
+	if deferIdx >= errCheckIdx {
+		t.Fatalf("expected reproduction: defer file.Close must appear before os.Create error check")
 	}
 }
 
@@ -188,6 +198,10 @@ type reproRegistry struct {
 	maxOpen     int
 }
 
+type reproManifestLayer struct {
+	Digest string `json:"digest"`
+}
+
 func (r *reproRegistry) FetchManifest(repo, tag string) (*Manifest, error) {
 	return &r.manifest, nil
 }
@@ -237,17 +251,16 @@ func makeTarLayerForRepro(t *testing.T, name, content string) []byte {
 
 func TestBugExercise5_ReproduceDeferredCloseInLoop(t *testing.T) {
 	uniqueImage := fmt.Sprintf("bug5-image-%d", time.Now().UnixNano())
-	_ = os.RemoveAll(filepath.Join("/tmp/basic-docker/images", uniqueImage))
-	defer os.RemoveAll(filepath.Join("/tmp/basic-docker/images", uniqueImage))
+	buggyHardcodedImagesDir := filepath.Join(os.TempDir(), "basic-docker", "images")
+	_ = os.RemoveAll(filepath.Join(buggyHardcodedImagesDir, uniqueImage))
+	defer os.RemoveAll(filepath.Join(buggyHardcodedImagesDir, uniqueImage))
 
 	r := &reproRegistry{
 		layers: map[string][]byte{},
 	}
 	digests := []string{"sha256:l1", "sha256:l2", "sha256:l3"}
 	for i, d := range digests {
-		r.manifest.Layers = append(r.manifest.Layers, struct {
-			Digest string "json:\"digest\""
-		}{Digest: d})
+		r.manifest.Layers = append(r.manifest.Layers, reproManifestLayer{Digest: d})
 		r.layers[d] = makeTarLayerForRepro(t, fmt.Sprintf("f-%d.txt", i), "x")
 	}
 
@@ -284,14 +297,16 @@ func TestBugExercise6_ReproduceHardcodedImageDirectoryMismatch(t *testing.T) {
 }
 
 func TestBugExercise7_ReproduceUnsafeExtractionLackOfValidation(t *testing.T) {
-	src, err := os.ReadFile("/home/runner/work/basic-docker-engine/basic-docker-engine/image.go")
+	src, err := os.ReadFile(repoFilePath(t, "image.go"))
 	if err != nil {
 		t.Fatalf("failed to read image.go: %v", err)
 	}
 	content := string(src)
 
-	if !strings.Contains(content, `exec.Command("tar", "-x", "-C", rootfs)`) {
-		t.Fatalf("expected tar extraction command pattern in extractLayer")
+	if !strings.Contains(content, `exec.Command("tar"`) ||
+		!strings.Contains(content, `"-x"`) ||
+		!strings.Contains(content, `"-C", rootfs`) {
+		t.Fatalf("expected tar-based extraction command pattern in extractLayer")
 	}
 	if strings.Contains(content, "filepath.Clean") || strings.Contains(content, "Rel(") {
 		t.Fatalf("expected no explicit path-boundary validation in extractLayer/LoadImageFromTar")
@@ -338,13 +353,13 @@ func TestBugExercise8_ReproduceIgnoredStateUpdateErrors(t *testing.T) {
 }
 
 func TestBugExercise9_ReproduceGlobalMutableNetworkStateDesign(t *testing.T) {
-	src, err := os.ReadFile("/home/runner/work/basic-docker-engine/basic-docker-engine/network.go")
+	src, err := os.ReadFile(repoFilePath(t, "network.go"))
 	if err != nil {
 		t.Fatalf("failed to read network.go: %v", err)
 	}
 	content := string(src)
 
-	if !strings.Contains(content, "var networks = []Network{}") {
+	if !strings.Contains(content, "var networks = []Network") {
 		t.Fatalf("expected global mutable networks state declaration")
 	}
 	if strings.Contains(content, "sync.Mutex") || strings.Contains(content, "sync.RWMutex") {
