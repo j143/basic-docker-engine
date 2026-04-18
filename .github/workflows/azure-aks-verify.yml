@@ -1,0 +1,148 @@
+name: Deploy and Verify on Azure AKS
+
+on:
+  workflow_dispatch:
+    inputs:
+      resource_group:
+        description: Azure resource group containing AKS
+        required: true
+        type: string
+      aks_cluster:
+        description: AKS cluster name
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NAMESPACE: capsule-test-${{ github.run_id }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '^1.24'
+          cache: true
+
+      - name: Build binary
+        run: |
+          go build -v -o basic-docker .
+          chmod +x basic-docker
+          sudo mv basic-docker /usr/local/bin/
+          which basic-docker
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set AKS context
+        run: |
+          az aks get-credentials \
+            --resource-group "${{ inputs.resource_group }}" \
+            --name "${{ inputs.aks_cluster }}" \
+            --overwrite-existing
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Create test resources in AKS
+        run: |
+          kubectl create namespace "$NAMESPACE"
+          kubectl apply -f k8s/crd-resourcecapsule.yaml
+          kubectl wait --for=condition=established --timeout=60s crd/resourcecapsules.capsules.docker.io
+
+          cat <<EOF | kubectl apply -f - -n "$NAMESPACE"
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: test-config-1.0
+            labels:
+              capsule.docker.io/name: test-config
+              capsule.docker.io/version: "1.0"
+          data:
+            config.yml: |
+              testKey: testValue
+              environment: azure-aks
+          EOF
+
+          cat <<EOF | kubectl apply -f - -n "$NAMESPACE"
+          apiVersion: capsules.docker.io/v1
+          kind: ResourceCapsule
+          metadata:
+            name: test-crd-capsule
+          spec:
+            data:
+              config.yaml: |
+                testKey: testValue
+                environment: azure-aks
+            version: "1.0"
+            capsuleType: configmap
+            rollback:
+              enabled: true
+          EOF
+
+          cat <<EOF | kubectl apply -f - -n "$NAMESPACE"
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: test-app
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: test-app
+            template:
+              metadata:
+                labels:
+                  app: test-app
+              spec:
+                containers:
+                - name: nginx
+                  image: nginx:alpine
+                  ports:
+                  - containerPort: 80
+          EOF
+
+          kubectl wait --for=condition=Available deployment/test-app -n "$NAMESPACE" --timeout=120s
+
+      - name: Verify ResourceCapsule concepts
+        run: |
+          kubectl get resourcecapsule test-crd-capsule -n "$NAMESPACE" -o yaml
+          kubectl get configmap test-config-1.0 -n "$NAMESPACE" -o yaml
+
+      - name: Verify capsule create command
+        run: |
+          mkdir -p /tmp/capsules
+          echo "test-config data from aks" > /tmp/capsules/test-config
+          basic-docker k8s-capsule create test-config 1.0 /tmp/capsules/test-config
+
+      - name: Verify volume behavior with existing tests
+        run: |
+          go test -v -run TestAttachCapsuleToDeployment
+
+      - name: Verify CRD behavior with existing tests
+        run: |
+          go test -v -run TestResourceCapsule
+
+      - name: Show AKS state on failure
+        if: failure()
+        run: |
+          kubectl get all -n "$NAMESPACE" || true
+          kubectl get resourcecapsules -n "$NAMESPACE" || true
+          kubectl get deployment test-app -n "$NAMESPACE" -o yaml || true
+
+      - name: Cleanup AKS test namespace
+        if: always()
+        run: |
+          kubectl delete namespace "$NAMESPACE" --ignore-not-found=true

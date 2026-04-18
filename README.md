@@ -43,6 +43,32 @@ This is a **teaching/runtime prototype** designed for:
 - Root privileges for namespace operations
 - Optional: Kubernetes cluster for CRD features
 
+## Simple Azure deployment and verification (AKS)
+
+This repository includes a manual GitHub Actions workflow to run the project’s Kubernetes verification flow on Azure Kubernetes Service.
+
+Workflow file:
+- `.github/workflows/azure-aks-verify.yml`
+
+What it does:
+- Logs into Azure and connects to an AKS cluster
+- Deploys test resources (ConfigMap, `ResourceCapsule` CRD object, Deployment)
+- Runs project verification focused on:
+  - volume behavior (`TestAttachCapsuleToDeployment`)
+  - new ResourceCapsule CRD concepts (`TestResourceCapsule`)
+
+Required GitHub secrets:
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+
+How to run:
+1. Open **Actions** → **Deploy and Verify on Azure AKS**
+2. Click **Run workflow**
+3. Provide:
+   - `resource_group`
+   - `aks_cluster`
+
 ## Build steps
 
 ### build go code
