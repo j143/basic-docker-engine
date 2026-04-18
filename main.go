@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -615,7 +616,7 @@ func resolveRegistry(imageName string) (string, string) {
 	parts := strings.SplitN(imageName, "/", 2)
 	if len(parts) == 2 {
 		host := parts[0]
-		if host == "localhost" || strings.Contains(host, ".") || strings.Contains(host, ":") {
+		if strings.Contains(host, ".") || strings.Contains(host, ":") || host == "localhost" {
 			registryURL = registryURLForHost(host)
 			repo = parts[1]
 		}
@@ -625,10 +626,26 @@ func resolveRegistry(imageName string) (string, string) {
 }
 
 func registryURLForHost(host string) string {
-	if host == "localhost" || strings.HasPrefix(host, "localhost:") || host == "[::1]" || strings.HasPrefix(host, "127.") {
+	if isLocalRegistryHost(host) {
 		return fmt.Sprintf("http://%s/v2/", host)
 	}
 	return fmt.Sprintf("https://%s/v2/", host)
+}
+
+func isLocalRegistryHost(host string) bool {
+	if host == "localhost" || strings.HasPrefix(host, "localhost:") {
+		return true
+	}
+
+	normalizedHost := host
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		normalizedHost = parsedHost
+	}
+	normalizedHost = strings.TrimPrefix(normalizedHost, "[")
+	normalizedHost = strings.TrimSuffix(normalizedHost, "]")
+
+	ip := net.ParseIP(normalizedHost)
+	return ip != nil && ip.IsLoopback()
 }
 
 func initializeBaseLayer(baseLayerPath string) error {
