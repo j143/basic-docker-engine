@@ -123,6 +123,12 @@ func TestResolveRegistry(t *testing.T) {
 			wantRepository: "alpine:latest",
 		},
 		{
+			name:           "short image with dot still uses default ghcr",
+			imageName:      "my.image:latest",
+			wantRegistry:   "https://ghcr.io/v2/",
+			wantRepository: "my.image:latest",
+		},
+		{
 			name:           "explicit ghcr host",
 			imageName:      "ghcr.io/j143/basic-docker-engine:latest",
 			wantRegistry:   "https://ghcr.io/v2/",
@@ -144,6 +150,12 @@ func TestResolveRegistry(t *testing.T) {
 			name:           "loopback local registry over http",
 			imageName:      "127.0.0.1:5000/alpine:latest",
 			wantRegistry:   "http://127.0.0.1:5000/v2/",
+			wantRepository: "alpine:latest",
+		},
+		{
+			name:           "ipv6 loopback local registry over http",
+			imageName:      "[::1]:5000/alpine:latest",
+			wantRegistry:   "http://[::1]:5000/v2/",
 			wantRepository: "alpine:latest",
 		},
 	}
