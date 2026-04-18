@@ -1,11 +1,11 @@
 package main
 
 import (
-	"os"
-	"testing"
 	"fmt"
-	"path/filepath"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"testing"
 )
 
 // Test Scenarios Documentation
@@ -106,6 +106,58 @@ func TestGetContainerStatus(t *testing.T) {
 	status = getContainerStatus("test-container")
 	if status != "Stopped" {
 		t.Errorf("Expected status 'Stopped', but got '%s'", status)
+	}
+}
+
+func TestResolveRegistry(t *testing.T) {
+	tests := []struct {
+		name           string
+		imageName      string
+		wantRegistry   string
+		wantRepository string
+	}{
+		{
+			name:           "default ghcr for short image",
+			imageName:      "alpine:latest",
+			wantRegistry:   "https://ghcr.io/v2/",
+			wantRepository: "alpine:latest",
+		},
+		{
+			name:           "explicit ghcr host",
+			imageName:      "ghcr.io/j143/basic-docker-engine:latest",
+			wantRegistry:   "https://ghcr.io/v2/",
+			wantRepository: "j143/basic-docker-engine:latest",
+		},
+		{
+			name:           "explicit docker host",
+			imageName:      "docker.io/library/busybox:latest",
+			wantRegistry:   "https://docker.io/v2/",
+			wantRepository: "library/busybox:latest",
+		},
+		{
+			name:           "local registry over http",
+			imageName:      "localhost:5000/alpine:latest",
+			wantRegistry:   "http://localhost:5000/v2/",
+			wantRepository: "alpine:latest",
+		},
+		{
+			name:           "loopback local registry over http",
+			imageName:      "127.0.0.1:5000/alpine:latest",
+			wantRegistry:   "http://127.0.0.1:5000/v2/",
+			wantRepository: "alpine:latest",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRegistry, gotRepository := resolveRegistry(tt.imageName)
+			if gotRegistry != tt.wantRegistry {
+				t.Fatalf("registry mismatch: got %q, want %q", gotRegistry, tt.wantRegistry)
+			}
+			if gotRepository != tt.wantRepository {
+				t.Fatalf("repository mismatch: got %q, want %q", gotRepository, tt.wantRepository)
+			}
+		})
 	}
 }
 

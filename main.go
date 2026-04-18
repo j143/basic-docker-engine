@@ -4,15 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
-	"runtime"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // Environment detection
@@ -146,7 +146,7 @@ func addDockerResourceCapsule(capsuleName, capsuleVersion, capsulePath string) e
 
 	fmt.Printf("[Docker] Verification output:\n%s\n", string(output))
 
-	 // Show docker ps output
+	// Show docker ps output
 	psCmd := exec.Command("docker", "ps", "-a")
 	psOutput, psErr := psCmd.CombinedOutput()
 	if psErr != nil {
@@ -185,7 +185,7 @@ func addKubernetesResourceCapsule(capsuleName, capsuleVersion, capsulePath strin
 	// Determine if we should create a ConfigMap or Secret based on the file content
 	// For this example, we'll create a ConfigMap if it's text data, Secret if binary
 	isTextData := isTextFile(capsuleData)
-	
+
 	if isTextData {
 		// Create as ConfigMap
 		data := map[string]string{
@@ -230,18 +230,18 @@ func isTextFile(data []byte) bool {
 	if len(data) == 0 {
 		return true
 	}
-	
+
 	sample := data
 	if len(data) > 512 {
 		sample = data[:512]
 	}
-	
+
 	for _, b := range sample {
 		if b == 0 {
 			return false // null byte suggests binary
 		}
 	}
-	
+
 	return true
 }
 
@@ -509,7 +509,7 @@ func printSystemInfo() {
 	fmt.Printf("Running in container: %v\n", inContainer)
 	fmt.Printf("Namespace privileges: %v\n", hasNamespacePrivileges)
 	fmt.Printf("Cgroup access: %v\n", hasCgroupAccess)
-	
+
 	// Display cgroup details
 	if cgroupInfo.Available {
 		cgroupVersionStr := "unknown"
@@ -526,7 +526,7 @@ func printSystemInfo() {
 	} else if cgroupInfo.ErrorMessage != "" {
 		fmt.Printf("Cgroup error: %s\n", cgroupInfo.ErrorMessage)
 	}
-	
+
 	fmt.Println("Available features:")
 	fmt.Printf("  - Process isolation: %v\n", hasNamespacePrivileges)
 	fmt.Printf("  - Network isolation: %v\n", hasNamespacePrivileges)
@@ -549,14 +549,7 @@ func run() {
 		fmt.Printf("Using locally loaded image '%s'.\n", imageName)
 	} else {
 		fmt.Printf("Fetching image '%s' from registry...\n", imageName)
-		// Extract registry URL and repository from image name
-		parts := strings.SplitN(imageName, "/", 2)
-		registryURL := "https://registry-1.docker.io/v2/" // Default to Docker Hub
-		repo := imageName
-		if len(parts) > 1 {
-			registryURL = fmt.Sprintf("http://%s/v2/", parts[0])
-			repo = parts[1]
-		}
+		registryURL, repo := resolveRegistry(imageName)
 
 		registry := NewDockerHubRegistry(registryURL)
 		image, err := Pull(registry, repo)
@@ -613,6 +606,29 @@ func run() {
 	fmt.Printf("Starting container %s\n", containerID)
 
 	runWithoutNamespaces(containerID, rootfs, command, args)
+}
+
+func resolveRegistry(imageName string) (string, string) {
+	registryURL := "https://ghcr.io/v2/"
+	repo := imageName
+
+	parts := strings.SplitN(imageName, "/", 2)
+	if len(parts) == 2 {
+		host := parts[0]
+		if host == "localhost" || strings.Contains(host, ".") || strings.Contains(host, ":") {
+			registryURL = registryURLForHost(host)
+			repo = parts[1]
+		}
+	}
+
+	return registryURL, repo
+}
+
+func registryURLForHost(host string) string {
+	if host == "localhost" || strings.HasPrefix(host, "localhost:") || host == "[::1]" || host == "::1" || strings.HasPrefix(host, "127.") {
+		return fmt.Sprintf("http://%s/v2/", host)
+	}
+	return fmt.Sprintf("https://%s/v2/", host)
 }
 
 func initializeBaseLayer(baseLayerPath string) error {
@@ -754,7 +770,7 @@ func runWithNamespaces(containerID, rootfs, command string, args []string) {
 // Reintroduce runWithoutNamespaces for simplicity and modularity
 func runWithoutNamespaces(containerID, rootfs, command string, args []string) {
 	fmt.Println("Warning: Namespace isolation is not permitted. Executing without isolation.")
-	
+
 	// Update state to running
 	startedAt := time.Now()
 	UpdateContainerState(containerID, func(m *ContainerMetadata) {
@@ -762,14 +778,14 @@ func runWithoutNamespaces(containerID, rootfs, command string, args []string) {
 		m.StartedAt = &startedAt
 		m.PID = os.Getpid()
 	})
-	
+
 	// Set up cgroups if available
 	if hasCgroupAccess {
 		if err := SetupCgroupsWithDetection(containerID, 100*1024*1024); err != nil {
 			fmt.Printf("Warning: Failed to setup cgroups: %v\n", err)
 		}
 	}
-	
+
 	// Set up log file
 	logFile := filepath.Join(baseDir, "containers", containerID, "stdout.log")
 	logFd, err := os.Create(logFile)
@@ -778,10 +794,10 @@ func runWithoutNamespaces(containerID, rootfs, command string, args []string) {
 	} else {
 		defer logFd.Close()
 	}
-	
+
 	cmd := exec.Command(command, args...)
 	cmd.Stdin = os.Stdin
-	
+
 	// Use MultiWriter to send output to both console and log file
 	if logFd != nil {
 		cmd.Stdout = io.MultiWriter(os.Stdout, logFd)
@@ -790,15 +806,15 @@ func runWithoutNamespaces(containerID, rootfs, command string, args []string) {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 	}
-	
+
 	err = cmd.Run()
-	
+
 	// Update state to exited or failed
 	finishedAt := time.Now()
 	exitCode := 0
 	state := StateExited
 	errorMsg := ""
-	
+
 	if err != nil {
 		state = StateFailed
 		errorMsg = err.Error()
@@ -809,7 +825,7 @@ func runWithoutNamespaces(containerID, rootfs, command string, args []string) {
 		}
 		fmt.Printf("Error: %v\n", err)
 	}
-	
+
 	UpdateContainerState(containerID, func(m *ContainerMetadata) {
 		m.State = state
 		m.FinishedAt = &finishedAt
@@ -1239,7 +1255,7 @@ func handleKubernetesCapsuleCommand() {
 	}
 
 	command := os.Args[3]
-	
+
 	kcm, err := NewKubernetesCapsuleManager("default")
 	if err != nil {
 		fmt.Printf("Error: Failed to create Kubernetes client: %v\n", err)
@@ -1256,20 +1272,20 @@ func handleKubernetesCapsuleCommand() {
 		name := os.Args[4]
 		version := os.Args[5]
 		filePath := os.Args[6]
-		
+
 		err := AddResourceCapsule("kubernetes", name, version, filePath)
 		if err != nil {
 			fmt.Printf("Error: Failed to create Kubernetes capsule: %v\n", err)
 			os.Exit(1)
 		}
-		
+
 	case "list":
 		err := kcm.ListCapsules()
 		if err != nil {
 			fmt.Printf("Error: Failed to list capsules: %v\n", err)
 			os.Exit(1)
 		}
-		
+
 	case "get":
 		if len(os.Args) < 6 {
 			fmt.Println("Usage: basic-docker k8s-capsule get <name> <version>")
@@ -1277,7 +1293,7 @@ func handleKubernetesCapsuleCommand() {
 		}
 		name := os.Args[4]
 		version := os.Args[5]
-		
+
 		// Try ConfigMap first
 		configMap, err := kcm.GetConfigMapCapsule(name, version)
 		if err == nil {
@@ -1285,7 +1301,7 @@ func handleKubernetesCapsuleCommand() {
 			fmt.Printf("Data keys: %v\n", getKeys(configMap.Data))
 			return
 		}
-		
+
 		// Try Secret
 		secret, err := kcm.GetSecretCapsule(name, version)
 		if err == nil {
@@ -1293,10 +1309,10 @@ func handleKubernetesCapsuleCommand() {
 			fmt.Printf("Data keys: %v\n", getKeysBytes(secret.Data))
 			return
 		}
-		
+
 		fmt.Printf("Error: Capsule %s:%s not found\n", name, version)
 		os.Exit(1)
-		
+
 	case "delete":
 		if len(os.Args) < 6 {
 			fmt.Println("Usage: basic-docker k8s-capsule delete <name> <version>")
@@ -1304,13 +1320,13 @@ func handleKubernetesCapsuleCommand() {
 		}
 		name := os.Args[4]
 		version := os.Args[5]
-		
+
 		err := kcm.DeleteCapsule(name, version)
 		if err != nil {
 			fmt.Printf("Error: Failed to delete capsule: %v\n", err)
 			os.Exit(1)
 		}
-		
+
 	default:
 		fmt.Printf("Error: Unknown command '%s'\n", command)
 		os.Exit(1)
@@ -1334,10 +1350,10 @@ func handleCapsuleBenchmark(environment string) {
 // runDockerCapsuleBenchmark runs benchmarks for Docker-based Resource Capsules
 func runDockerCapsuleBenchmark() {
 	fmt.Println("=== Docker Resource Capsule Benchmark ===")
-	
+
 	cm := NewCapsuleManager()
 	cm.AddCapsule("benchmark-capsule", "1.0", "/tmp/benchmark-file")
-	
+
 	// Create a test file
 	testFile := "/tmp/benchmark-file"
 	err := os.WriteFile(testFile, []byte("benchmark data"), 0644)
@@ -1346,7 +1362,7 @@ func runDockerCapsuleBenchmark() {
 		return
 	}
 	defer os.Remove(testFile)
-	
+
 	// Benchmark capsule access
 	iterations := 10000
 	start := time.Now()
@@ -1358,7 +1374,7 @@ func runDockerCapsuleBenchmark() {
 		}
 	}
 	duration := time.Since(start)
-	
+
 	fmt.Printf("Docker Capsule Access: %d iterations in %v\n", iterations, duration)
 	fmt.Printf("Average per operation: %v\n", duration/time.Duration(iterations))
 }
@@ -1366,27 +1382,27 @@ func runDockerCapsuleBenchmark() {
 // runKubernetesCapsuleBenchmark runs benchmarks for Kubernetes-based Resource Capsules
 func runKubernetesCapsuleBenchmark() {
 	fmt.Println("=== Kubernetes Resource Capsule Benchmark ===")
-	
+
 	kcm, err := NewKubernetesCapsuleManager("default")
 	if err != nil {
 		fmt.Printf("Error: Failed to create Kubernetes client: %v\n", err)
 		return
 	}
-	
+
 	// Create a test capsule
 	testData := map[string]string{
 		"benchmark-file": "benchmark data",
 	}
-	
+
 	err = kcm.CreateConfigMapCapsule("benchmark-capsule", "1.0", testData)
 	if err != nil {
 		fmt.Printf("Error: Failed to create test capsule: %v\n", err)
 		return
 	}
-	
+
 	// Clean up after benchmark
 	defer kcm.DeleteCapsule("benchmark-capsule", "1.0")
-	
+
 	// Benchmark capsule access
 	iterations := 100 // Lower iterations for K8s API calls
 	start := time.Now()
@@ -1398,7 +1414,7 @@ func runKubernetesCapsuleBenchmark() {
 		}
 	}
 	duration := time.Since(start)
-	
+
 	fmt.Printf("Kubernetes Capsule Access: %d iterations in %v\n", iterations, duration)
 	fmt.Printf("Average per operation: %v\n", duration/time.Duration(iterations))
 }
@@ -1476,7 +1492,7 @@ func handleKubernetesCRDCommand() {
 
 		fmt.Printf("ResourceCapsule CRD: %s\n", name)
 		fmt.Printf("Namespace: %s\n", resourceCapsule.GetNamespace())
-		
+
 		spec, found, _ := unstructured.NestedMap(resourceCapsule.Object, "spec")
 		if found {
 			if version, found, _ := unstructured.NestedString(spec, "version"); found {
@@ -1486,7 +1502,7 @@ func handleKubernetesCRDCommand() {
 				fmt.Printf("Type: %s\n", capsuleType)
 			}
 		}
-		
+
 		status, found, _ := unstructured.NestedMap(resourceCapsule.Object, "status")
 		if found {
 			if phase, found, _ := unstructured.NestedString(status, "phase"); found {
@@ -1585,20 +1601,20 @@ func handleMonitoringCommand() {
 			fmt.Printf("Error: Invalid PID '%s': %v\n", os.Args[3], err)
 			return
 		}
-		
+
 		pm := NewProcessMonitor(pid)
 		metrics, err := pm.GetMetrics()
 		if err != nil {
 			fmt.Printf("Error getting process metrics: %v\n", err)
 			return
 		}
-		
+
 		jsonData, err := json.MarshalIndent(metrics, "", "  ")
 		if err != nil {
 			fmt.Printf("Error formatting metrics: %v\n", err)
 			return
 		}
-		
+
 		fmt.Printf("Process Metrics (PID %d):\n", pid)
 		fmt.Println(string(jsonData))
 
@@ -1608,20 +1624,20 @@ func handleMonitoringCommand() {
 			return
 		}
 		containerID := os.Args[3]
-		
+
 		cm := NewContainerMonitor(containerID)
 		metrics, err := cm.GetMetrics()
 		if err != nil {
 			fmt.Printf("Error getting container metrics: %v\n", err)
 			return
 		}
-		
+
 		jsonData, err := json.MarshalIndent(metrics, "", "  ")
 		if err != nil {
 			fmt.Printf("Error formatting metrics: %v\n", err)
 			return
 		}
-		
+
 		fmt.Printf("Container Metrics (%s):\n", containerID)
 		fmt.Println(string(jsonData))
 
@@ -1632,20 +1648,20 @@ func handleMonitoringCommand() {
 			fmt.Printf("Error getting host metrics: %v\n", err)
 			return
 		}
-		
+
 		jsonData, err := json.MarshalIndent(metrics, "", "  ")
 		if err != nil {
 			fmt.Printf("Error formatting metrics: %v\n", err)
 			return
 		}
-		
+
 		fmt.Println("Host Metrics:")
 		fmt.Println(string(jsonData))
 
 	case "all":
 		aggregator := NewMonitoringAggregator()
 		aggregator.AddMonitor(NewHostMonitor())
-		
+
 		// Add container monitors for all existing containers
 		containerDir := filepath.Join(baseDir, "containers")
 		if entries, err := os.ReadDir(containerDir); err == nil {
@@ -1655,13 +1671,13 @@ func handleMonitoringCommand() {
 				}
 			}
 		}
-		
+
 		metricsStr, err := aggregator.GetFormattedMetrics()
 		if err != nil {
 			fmt.Printf("Error getting aggregated metrics: %v\n", err)
 			return
 		}
-		
+
 		fmt.Println("Complete System Monitoring (All Levels):")
 		fmt.Println(metricsStr)
 
@@ -1669,7 +1685,7 @@ func handleMonitoringCommand() {
 		// Perform gap analysis
 		aggregator := NewMonitoringAggregator()
 		aggregator.AddMonitor(NewHostMonitor())
-		
+
 		// Add container monitors
 		containerDir := filepath.Join(baseDir, "containers")
 		if entries, err := os.ReadDir(containerDir); err == nil {
@@ -1679,20 +1695,20 @@ func handleMonitoringCommand() {
 				}
 			}
 		}
-		
+
 		metrics, err := aggregator.GetAllMetrics()
 		if err != nil {
 			fmt.Printf("Error getting metrics for gap analysis: %v\n", err)
 			return
 		}
-		
+
 		gap := AnalyzeMonitoringGap(metrics)
 		gapData, err := json.MarshalIndent(gap, "", "  ")
 		if err != nil {
 			fmt.Printf("Error formatting gap analysis: %v\n", err)
 			return
 		}
-		
+
 		fmt.Println("Monitoring Gap Analysis:")
 		fmt.Println("========================")
 		fmt.Println("This analysis identifies gaps in monitoring coverage between")
@@ -1707,7 +1723,7 @@ func handleMonitoringCommand() {
 			return
 		}
 		containerID := os.Args[3]
-		
+
 		showMonitoringCorrelation(containerID)
 
 	default:
@@ -1721,7 +1737,7 @@ func showMonitoringCorrelation(containerID string) {
 	fmt.Printf("Monitoring Correlation Analysis for Container: %s\n", containerID)
 	fmt.Println("=" + strings.Repeat("=", len(containerID)+41))
 	fmt.Println()
-	
+
 	// Get container metrics
 	cm := NewContainerMonitor(containerID)
 	containerMetrics, err := cm.GetMetrics()
@@ -1729,7 +1745,7 @@ func showMonitoringCorrelation(containerID string) {
 		fmt.Printf("Error getting container metrics: %v\n", err)
 		return
 	}
-	
+
 	// Get host metrics
 	hm := NewHostMonitor()
 	hostMetrics, err := hm.GetMetrics()
@@ -1737,31 +1753,31 @@ func showMonitoringCorrelation(containerID string) {
 		fmt.Printf("Error getting host metrics: %v\n", err)
 		return
 	}
-	
+
 	// Display correlation table as per problem statement
 	fmt.Println("Level Correlation Table (Based on Docker Monitoring Problem):")
 	fmt.Println("-------------------------------------------------------------")
 	fmt.Printf("%-15s | %-20s | %-20s | %-20s\n", "Aspect", "Process", "Container", "Host")
 	fmt.Println(strings.Repeat("-", 80))
-	
+
 	if cMetrics, ok := containerMetrics.(ContainerMetrics); ok {
 		if hMetrics, ok := hostMetrics.(HostMetrics); ok {
 			// Spec line
-			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n", 
+			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n",
 				"Spec", "Source", "Dockerfile", "Kickstart")
-			
+
 			// On disk line
-			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n", 
+			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n",
 				"On disk", ".TEXT", cMetrics.DockerPath, "/")
-			
+
 			// In memory line
 			processInfo := "N/A"
 			if len(cMetrics.Processes) > 0 {
 				processInfo = fmt.Sprintf("PID %d", cMetrics.Processes[0].PID)
 			}
-			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n", 
+			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n",
 				"In memory", processInfo, cMetrics.ContainerID, hMetrics.Hostname)
-			
+
 			// In network line
 			networkInfo := "Socket"
 			if len(cMetrics.Processes) > 0 {
@@ -1775,27 +1791,27 @@ func showMonitoringCorrelation(containerID string) {
 			if len(hMetrics.NetworkInterfaces) > 0 {
 				ethInfo = hMetrics.NetworkInterfaces[0].Name
 			}
-			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n", 
+			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n",
 				"In network", networkInfo, vethInfo, ethInfo)
-			
+
 			// Runtime context line
-			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n", 
+			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n",
 				"Runtime context", "server core", "host", hMetrics.RuntimeContext)
-			
+
 			// Isolation line
-			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n", 
+			fmt.Printf("%-15s | %-20s | %-20s | %-20s\n",
 				"Isolation", "moderate", "private OS view", "full")
 		}
 	}
-	
+
 	fmt.Println()
 	fmt.Println("Detailed Metrics:")
 	fmt.Println("-----------------")
-	
+
 	// Container details
 	containerData, _ := json.MarshalIndent(containerMetrics, "", "  ")
 	fmt.Printf("Container Metrics:\n%s\n\n", string(containerData))
-	
+
 	// Host summary (subset of metrics)
 	if hMetrics, ok := hostMetrics.(HostMetrics); ok {
 		fmt.Printf("Host Summary:\n")
@@ -1823,12 +1839,12 @@ func showLogs(containerID string) {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	if logs == "" {
 		fmt.Println("No logs available for this container")
 		return
 	}
-	
+
 	fmt.Print(logs)
 }
 
@@ -1839,12 +1855,12 @@ func inspectContainer(containerID string) {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	data, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
 		fmt.Printf("Error formatting container data: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	fmt.Println(string(data))
 }
