@@ -617,6 +617,9 @@ func resolveRegistry(imageName string) (string, string) {
 	parts := strings.SplitN(imageName, "/", 2)
 	if len(parts) == 2 {
 		host := parts[0]
+		if at := strings.LastIndex(host, "@"); at >= 0 && at < len(host)-1 {
+			host = host[at+1:]
+		}
 		if strings.Contains(host, ".") || strings.Contains(host, ":") || host == "localhost" {
 			registryURL = registryURLForHost(host)
 			repo = parts[1]
