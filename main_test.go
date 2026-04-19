@@ -160,13 +160,13 @@ func TestResolveRegistry(t *testing.T) {
 		},
 		{
 			name:           "credentialed local registry over http",
-			imageName:      "user:password@localhost:5000/alpine",
+			imageName:      "testuser:testpass@localhost:5000/alpine",
 			wantRegistry:   "http://localhost:5000/v2/",
 			wantRepository: "alpine",
 		},
 		{
 			name:           "credentialed local registry with @ in username over http",
-			imageName:      "user@domain:password@localhost:5000/alpine:latest",
+			imageName:      "testuser@example.com:testpass@localhost:5000/alpine:latest",
 			wantRegistry:   "http://localhost:5000/v2/",
 			wantRepository: "alpine:latest",
 		},
