@@ -164,6 +164,12 @@ func TestResolveRegistry(t *testing.T) {
 			wantRegistry:   "http://localhost:5000/v2/",
 			wantRepository: "alpine",
 		},
+		{
+			name:           "credentialed local registry with @ in username over http",
+			imageName:      "user@domain:password@localhost:5000/alpine:latest",
+			wantRegistry:   "http://localhost:5000/v2/",
+			wantRepository: "alpine:latest",
+		},
 	}
 
 	for _, tt := range tests {
