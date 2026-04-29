@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
@@ -219,9 +220,12 @@ func (kcm *KubernetesCapsuleManager) AttachCapsuleToDeployment(deploymentName, c
     var volumeSource v1.VolumeSource
     var mountPath string
     
+    // Kubernetes volume names must not contain dots; replace with dashes
+    safeVersion := strings.ReplaceAll(capsuleVersion, ".", "-")
+
     if configMapErr == nil {
         // It's a ConfigMap capsule
-        volumeName = fmt.Sprintf("capsule-%s-%s", capsuleName, capsuleVersion)
+        volumeName = fmt.Sprintf("capsule-%s-%s", capsuleName, safeVersion)
         volumeSource = v1.VolumeSource{
             ConfigMap: &v1.ConfigMapVolumeSource{
                 LocalObjectReference: v1.LocalObjectReference{
@@ -232,7 +236,7 @@ func (kcm *KubernetesCapsuleManager) AttachCapsuleToDeployment(deploymentName, c
         mountPath = fmt.Sprintf("/capsules/%s/%s", capsuleName, capsuleVersion)
     } else if secretErr == nil {
         // It's a Secret capsule
-        volumeName = fmt.Sprintf("capsule-%s-%s", capsuleName, capsuleVersion)
+        volumeName = fmt.Sprintf("capsule-%s-%s", capsuleName, safeVersion)
         volumeSource = v1.VolumeSource{
             Secret: &v1.SecretVolumeSource{
                 SecretName: secretName,
