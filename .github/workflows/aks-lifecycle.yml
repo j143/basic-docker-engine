@@ -1,0 +1,199 @@
+name: AKS Lifecycle — Deploy / Verify / Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Action to perform
+        required: true
+        type: choice
+        options:
+          - deploy
+          - verify
+          - deploy-and-verify
+          - destroy
+        default: deploy-and-verify
+      resource_group:
+        description: Azure resource group name
+        required: false
+        default: rg-basic-docker
+        type: string
+      aks_cluster:
+        description: AKS cluster name
+        required: false
+        default: basic-docker-aks
+        type: string
+      location:
+        description: Azure region (used only during deploy)
+        required: false
+        default: eastus
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: ${{ inputs.resource_group }}
+  CLUSTER_NAME:   ${{ inputs.aks_cluster }}
+  LOCATION:       ${{ inputs.location }}
+
+jobs:
+  # ── Deploy ────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy AKS cluster
+    runs-on: ubuntu-latest
+    if: ${{ inputs.action == 'deploy' || inputs.action == 'deploy-and-verify' }}
+    outputs:
+      cluster_ready: ${{ steps.aks.outputs.cluster_ready }}
+
+    steps:
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure resource group
+        run: |
+          if az group show --name "$RESOURCE_GROUP" &>/dev/null; then
+            echo "Resource group '$RESOURCE_GROUP' already exists."
+          else
+            az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
+            echo "Resource group '$RESOURCE_GROUP' created."
+          fi
+
+      - name: Ensure AKS cluster
+        id: aks
+        run: |
+          if az aks show --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" &>/dev/null; then
+            echo "AKS cluster '$CLUSTER_NAME' already exists."
+          else
+            echo "Creating AKS cluster '$CLUSTER_NAME' (takes ~3-5 min)..."
+            az aks create \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$CLUSTER_NAME" \
+              --node-count 1 \
+              --node-vm-size Standard_B2s \
+              --generate-ssh-keys \
+              --enable-oidc-issuer \
+              --enable-workload-identity \
+              --output none
+            echo "AKS cluster created."
+          fi
+          echo "cluster_ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Show cluster info
+        run: |
+          az aks get-credentials \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$CLUSTER_NAME" \
+            --overwrite-existing
+          kubectl get nodes
+
+  # ── Verify ────────────────────────────────────────────────────────────────
+  verify:
+    name: Verify ADR-001 on AKS
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    if: |
+      always() &&
+      (inputs.action == 'verify' || inputs.action == 'deploy-and-verify') &&
+      (needs.deploy.result == 'success' || needs.deploy.result == 'skipped')
+    timeout-minutes: 20
+    env:
+      NAMESPACE: adr001-ci-${{ github.run_id }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '^1.24'
+          cache: true
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Connect to AKS
+        run: |
+          az aks get-credentials \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$CLUSTER_NAME" \
+            --overwrite-existing
+          kubectl get nodes
+
+      - name: Apply ResourceCapsule CRD
+        run: |
+          kubectl apply -f k8s/crd-resourcecapsule.yaml
+          kubectl wait --for=condition=established --timeout=60s \
+            crd/resourcecapsules.capsules.docker.io
+
+      - name: Run ADR-001 verification script
+        run: |
+          chmod +x scripts/verify-adr-001.sh
+          bash scripts/verify-adr-001.sh \
+            --resource-group "$RESOURCE_GROUP" \
+            --cluster "$CLUSTER_NAME"
+
+      - name: Run unit tests (capsule + CRD)
+        run: |
+          go test -v -run "TestKubernetesConfigMapCapsule|TestAttachCapsuleToDeployment|TestResourceCapsule" \
+            -count=1 ./...
+
+  # ── Destroy ───────────────────────────────────────────────────────────────
+  destroy:
+    name: Destroy AKS resources
+    runs-on: ubuntu-latest
+    needs: [verify]
+    if: |
+      always() &&
+      (inputs.action == 'destroy' || inputs.action == 'deploy-and-verify') &&
+      (needs.verify.result == 'success' || needs.verify.result == 'skipped' || inputs.action == 'destroy')
+
+    steps:
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Delete AKS cluster
+        run: |
+          if az aks show --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" &>/dev/null; then
+            echo "Deleting AKS cluster '$CLUSTER_NAME'..."
+            az aks delete \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$CLUSTER_NAME" \
+              --yes --no-wait
+            echo "Deletion initiated (running in background)."
+          else
+            echo "Cluster '$CLUSTER_NAME' not found — nothing to delete."
+          fi
+
+      - name: Delete resource group (optional — comment out to keep)
+        run: |
+          if az group show --name "$RESOURCE_GROUP" &>/dev/null; then
+            echo "Deleting resource group '$RESOURCE_GROUP'..."
+            az group delete \
+              --name "$RESOURCE_GROUP" \
+              --yes --no-wait
+            echo "Resource group deletion initiated."
+          else
+            echo "Resource group '$RESOURCE_GROUP' not found — nothing to delete."
+          fi
+
+      - name: Summary
+        run: |
+          echo "## Destroy Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Cluster \`$CLUSTER_NAME\` deletion initiated" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Resource group \`$RESOURCE_GROUP\` deletion initiated" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Deletions run async; check Azure portal for final status" >> "$GITHUB_STEP_SUMMARY"
