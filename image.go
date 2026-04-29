@@ -72,7 +72,9 @@ type Registry interface {
 
 // DockerHubRegistry is a default implementation of the Registry interface for GHCR or custom registries.
 type DockerHubRegistry struct {
-	BaseURL string
+	BaseURL  string
+	Username string
+	Password string
 }
 
 // NewDockerHubRegistry creates a new instance of DockerHubRegistry with an optional custom registry URL.
@@ -85,10 +87,25 @@ func NewDockerHubRegistry(customURL string) *DockerHubRegistry {
 	}
 }
 
+// NewDockerHubRegistryWithCreds creates a DockerHubRegistry that sends HTTP Basic Auth on every request.
+func NewDockerHubRegistryWithCreds(customURL, username, password string) *DockerHubRegistry {
+	r := NewDockerHubRegistry(customURL)
+	r.Username = username
+	r.Password = password
+	return r
+}
+
 // FetchManifest fetches the manifest for a given repository and tag.
 func (r *DockerHubRegistry) FetchManifest(repo, tag string) (*Manifest, error) {
 	url := fmt.Sprintf("%s%s/manifests/%s", r.BaseURL, repo, tag)
-	resp, err := http.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create manifest request: %w", err)
+	}
+	if r.Username != "" {
+		req.SetBasicAuth(r.Username, r.Password)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch manifest: %w", err)
 	}
@@ -109,7 +126,14 @@ func (r *DockerHubRegistry) FetchManifest(repo, tag string) (*Manifest, error) {
 // FetchLayer fetches a specific layer by its digest.
 func (r *DockerHubRegistry) FetchLayer(repo, digest string) (io.ReadCloser, error) {
 	url := fmt.Sprintf("%s%s/blobs/%s", r.BaseURL, repo, digest)
-	resp, err := http.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create layer request: %w", err)
+	}
+	if r.Username != "" {
+		req.SetBasicAuth(r.Username, r.Password)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch layer: %w", err)
 	}
