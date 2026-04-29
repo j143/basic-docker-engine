@@ -552,8 +552,9 @@ func run() {
 	} else {
 		fmt.Printf("Fetching image '%s' from registry...\n", imageName)
 		registryURL, repo := resolveRegistry(imageName)
+		username, password := extractCredentials(imageName)
 
-		registry := NewDockerHubRegistry(registryURL)
+		registry := NewDockerHubRegistryWithCreds(registryURL, username, password)
 		image, err := Pull(registry, repo)
 		if err != nil {
 			fmt.Printf("Error: Failed to fetch image '%s': %v\n", imageName, err)
@@ -627,6 +628,26 @@ func resolveRegistry(imageName string) (string, string) {
 	}
 
 	return registryURL, repo
+}
+
+// extractCredentials parses "user:pass@host/repo" and returns (username, password).
+// Returns empty strings when no credentials are present.
+func extractCredentials(imageName string) (string, string) {
+	parts := strings.SplitN(imageName, "/", 2)
+	if len(parts) != 2 {
+		return "", ""
+	}
+	hostPart := parts[0]
+	at := strings.LastIndex(hostPart, "@")
+	if at < 0 {
+		return "", ""
+	}
+	creds := hostPart[:at]
+	colon := strings.Index(creds, ":")
+	if colon < 0 {
+		return creds, ""
+	}
+	return creds[:colon], creds[colon+1:]
 }
 
 func registryURLForHost(host string) string {

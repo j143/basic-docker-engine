@@ -185,6 +185,32 @@ func TestResolveRegistry(t *testing.T) {
 	}
 }
 
+func TestExtractCredentials(t *testing.T) {
+	tests := []struct {
+		name      string
+		imageName string
+		wantUser  string
+		wantPass  string
+	}{
+		{"no credentials", "localhost:5000/alpine", "", ""},
+		{"user and password", "user:password@localhost:5000/alpine", "user", "password"},
+		{"email username", "testuser@example.com:testpass@localhost:5000/alpine:latest", "testuser@example.com", "testpass"},
+		{"no slash", "alpine:latest", "", ""},
+		{"username only (no colon)", "user@localhost:5000/alpine", "user", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotUser, gotPass := extractCredentials(tt.imageName)
+			if gotUser != tt.wantUser {
+				t.Fatalf("username: got %q, want %q", gotUser, tt.wantUser)
+			}
+			if gotPass != tt.wantPass {
+				t.Fatalf("password: got %q, want %q", gotPass, tt.wantPass)
+			}
+		})
+	}
+}
+
 // TestCapsuleManager:
 // - Verifies the CapsuleManager's functionality, including adding, retrieving, and attaching Resource Capsules.
 // - Setup: Initializes a CapsuleManager instance.
