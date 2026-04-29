@@ -268,7 +268,7 @@ func TestAttachCapsuleToDeployment(t *testing.T) {
     // Check that the volume was added
     volumeFound := false
     for _, volume := range updatedDeployment.Spec.Template.Spec.Volumes {
-        if volume.Name == "capsule-test-capsule-1.0" {
+        if volume.Name == "capsule-test-capsule-1-0" {
             volumeFound = true
             break
         }
@@ -281,7 +281,7 @@ func TestAttachCapsuleToDeployment(t *testing.T) {
     container := &updatedDeployment.Spec.Template.Spec.Containers[0]
     mountFound := false
     for _, mount := range container.VolumeMounts {
-        if mount.Name == "capsule-test-capsule-1.0" {
+        if mount.Name == "capsule-test-capsule-1-0" {
             mountFound = true
             if mount.MountPath != "/capsules/test-capsule/1.0" {
                 t.Errorf("Unexpected mount path: got %s, want /capsules/test-capsule/1.0", mount.MountPath)
