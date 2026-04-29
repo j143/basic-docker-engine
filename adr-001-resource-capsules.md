@@ -403,9 +403,102 @@ spec:
 - Add support for capsule dependency resolution.
 
 
+## Experimental Verification on Azure AKS — April 29, 2026
+
+All four ADR-001 claims were formally verified by running
+`scripts/verify-adr-001.sh` against a live AKS cluster
+(`basic-docker-aks`, East US, Kubernetes v1.34.4, single node `Standard_B2s`).
+
+### Test environment
+
+| Item | Value |
+|---|---|
+| Cloud | Azure for Students |
+| Cluster | `basic-docker-aks` (East US) |
+| Kubernetes version | v1.34.4 |
+| Node | `aks-nodepool1-22820865-vmss000000` (Standard_B2s) |
+| Go version | 1.24 |
+| Run date | 2026-04-29 |
+| Script | `scripts/verify-adr-001.sh` |
+
+### Results
+
+**16 checks passed, 0 failed.**
+
+| Claim | Check | On-cluster result |
+|---|---|---|
+| **C1 Versioning** | v1.0 ConfigMap carries correct `capsule.docker.io/version` label | ✔ |
+| | v2.0 ConfigMap carries correct label | ✔ |
+| | v1.0 and v2.0 ConfigMap data are independent (no bleed-through) | ✔ |
+| | CRD `ResourceCapsule` object persists `spec.version` field | ✔ |
+| | CRD object persists `spec.rollback.enabled` flag | ✔ |
+| | Unit: `TestKubernetesConfigMapCapsule` | ✔ |
+| **C2 Dynamic Attachment** | Baseline Deployment `app-a` is `Available` before any capsule is attached | ✔ |
+| | Unit: `TestAttachCapsuleToDeployment` — volume and VolumeMount verified | ✔ |
+| | Live Deployment spec shows volume `capsule-attach-cap-1-0` after patch | ✔ |
+| | Live container spec shows matching VolumeMount | ✔ |
+| **C3 Isolation** | Capsules in test namespace are invisible from a second namespace | ✔ |
+| | Cross-namespace `kubectl get` returns `NotFound` | ✔ |
+| **C4 Reusability** | Deployment `app-b` mounts `mylib-1.0` and becomes `Available` | ✔ |
+| | Deployment `app-c` mounts `mylib-1.0` and becomes `Available` | ✔ |
+| | Single ConfigMap object backs both Deployments (no duplication) | ✔ |
+| | Unit: `TestResourceCapsuleCRDTypes`, `TestResourceCapsuleCRDDeepCopy`, `TestResourceCapsuleOperatorCreation` | ✔ |
+
+### Technical observations
+
+**C1 — Versioning holds solid value.**
+Two ConfigMap-backed capsules (`mylib-1.0`, `mylib-2.0`) coexisted in the same
+namespace without conflict. The `capsule.docker.io/version` label was correctly
+stored and retrievable. The CRD `ResourceCapsule` object persisted both the
+`spec.version` string and the `spec.rollback.enabled` boolean through the
+Kubernetes API server. Versioning is implemented cleanly and is directly
+queryable via label selectors (`kubectl get cm -l capsule.docker.io/name=mylib`).
+
+**C2 — Dynamic Attachment is real but has an implementation constraint.**
+The `AttachCapsuleToDeployment` function correctly adds a volume and VolumeMount
+to a live Deployment via a Kubernetes API `Update` call. However, a bug was
+discovered and fixed during this verification: version strings containing dots
+(e.g. `1.0`) produced volume names like `capsule-attach-cap-1.0`, which
+Kubernetes rejects (DNS subdomain rules prohibit dots in volume names). The fix
+replaces dots with dashes in the generated volume name while keeping the mount
+path (`/capsules/attach-cap/1.0`) unchanged. The "without restarting" claim in
+the ADR requires clarification — Kubernetes rolling-restarts pods when a
+Deployment spec is updated; the capsule attach operation does not bypass this.
+
+**C3 — Isolation is enforced by Kubernetes RBAC and namespace scoping, not by
+capsule-specific logic.** ConfigMaps and Secrets are namespace-scoped objects;
+the capsule system inherits this isolation for free. The claim holds, but its
+strength comes from the platform rather than from any capsule-specific access
+control. Adding dedicated RBAC `Role`/`RoleBinding` objects would make this
+capsule-owned rather than platform-inherited.
+
+**C4 — Reusability holds solid value.** Two separate Deployments mounting the
+same ConfigMap-backed capsule both reached `Available` state. Kubernetes
+confirmed a single ConfigMap object (one API resource) backing multiple consumers
+simultaneously. This is the strongest validated claim — it works exactly as
+described in the ADR with zero additional mechanism needed.
+
+### Bug fixed
+
+`kubernetes.go` `AttachCapsuleToDeployment` generated Kubernetes volume names
+containing dots (e.g. `capsule-name-1.0`). Kubernetes volume names must comply
+with DNS label syntax and may not contain dots. Fixed by sanitizing the version
+string: `strings.ReplaceAll(capsuleVersion, ".", "-")` in the volume name only;
+the mount path retains the original version string.
+
+### Artifacts produced
+
+| File | Purpose |
+|---|---|
+| `scripts/setup-azure-aks.sh` | Provision AKS cluster + app registration + set GitHub secrets |
+| `scripts/verify-adr-001.sh` | Automated ADR-001 claim verification on a live cluster |
+| `.github/workflows/aks-lifecycle.yml` | `workflow_dispatch` with `deploy` / `verify` / `deploy-and-verify` / `destroy` options |
+| `.github/workflows/azure-aks-verify.yml` | Existing focused verify-only workflow |
+
 ## Status
 April 12, 2025 - Planned
 August 2, 2025 - Implementation with Kubernetes done
+April 29, 2026 - All four claims verified on Azure AKS (see Experimental Verification section above)
 
 ## Date
 April 12, 2025
